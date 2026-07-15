@@ -12,9 +12,10 @@ const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
 
 // Vocabulaire et style extraits de comptes rendus de chantier réels (dossier
-// compte_rendu_exemples/) — utilisés pour guider Groq Whisper (paramètre "prompt",
-// qui biaise la reconnaissance vers un vocabulaire donné) et pour aider Gemini à
-// corriger le jargon métier mal transcrit.
+// compte_rendu_exemples/) — utilisés pour aider Gemini à corriger le jargon métier
+// mal transcrit lors de la structuration du texte (pas pour Groq, voir plus bas :
+// un LLM comme Gemini connaît déjà ce vocabulaire, ce qui l'aide surtout c'est le
+// style attendu, pas la liste de mots).
 const TRADE_VOCABULARY = [
   'tapée', 'plinthe', 'frisette', 'faïence', 'crépis', 'seuil', 'chape', 'gaine',
   'VMC', 'faux-plafond', 'cloison', 'huisserie', 'galandage', 'calepinage',
@@ -26,8 +27,27 @@ const TRADE_VOCABULARY = [
   'sauna', 'adoucisseur', 'porte à galandage', 'porte accordéon', 'variateur'
 ].join(', ');
 
+// Puces réelles tirées des CR de compte_rendu_exemples/, utilisées pour montrer à Gemini
+// le style télégraphique attendu (bien plus efficace qu'une simple consigne "sois concis").
+const REAL_TASK_EXAMPLES = [
+  'Fermer les gaines du plombier',
+  'Tapées fenêtres cuisine abîmées',
+  "Remplacer le groupe de sécurité et purger le ballon d'eau chaude",
+].join(' / ');
+
+// Whisper (contrairement à un LLM comme Gemini) n'a pas de connaissance du monde : il a
+// besoin qu'on lui donne explicitement le registre attendu. Une phrase de contexte
+// naturelle + un exemple de phrase orale pèsent bien plus qu'une liste de mots brute,
+// car le modèle conditionne sur le style/registre des tokens précédents, pas seulement
+// sur des mots isolés.
 const GROQ_TRANSCRIPTION_PROMPT =
-  `Compte rendu de chantier en français. Vocabulaire du bâtiment : ${TRADE_VOCABULARY}.`;
+  "Compte rendu de chantier dicté à voix haute par un artisan du bâtiment qui se déplace " +
+  "pièce par pièce. Vocabulaire courant : plomberie (mitigeur, chauffe-eau, groupe de " +
+  "sécurité, siphon, VMC), électricité (tableau électrique, disjoncteur, différentiel, " +
+  "gaine), maçonnerie (chape, ragréage, linteau, crépis), menuiserie (huisserie, tapée, " +
+  "plinthe, porte à galandage), plâtrerie (placo, cloison, faux-plafond). Exemple : " +
+  "\"Dans la salle de bain, j'ai remplacé le mitigeur et vérifié l'étanchéité du receveur " +
+  "de douche. En cuisine, j'ai raccordé le nouveau chauffe-eau.\"";
 
 const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
 
@@ -547,7 +567,7 @@ Le texte ci-dessous a été dicté à la voix par un artisan qui se déplace de 
 Tâche :
 1. Corrige les fautes de transcription, en particulier le jargon du bâtiment mal reconnu. Vocabulaire fréquent du métier : ${TRADE_VOCABULARY}.
 2. Regroupe les tâches par zone/pièce mentionnée (ex: "Salle de bain", "Cuisine", "Chambre 2"). Si aucune zone n'est identifiable, utilise une seule zone "Général".
-3. Puces courtes et factuelles, style compte rendu de chantier réel (ex: "Fermer les gaines du plombier", "Remplacer le groupe de sécurité"), jamais de phrases commerciales.
+3. Puces courtes et factuelles, exactement le style télégraphique d'un vrai compte rendu de chantier — voici des exemples réels du registre attendu : ${REAL_TASK_EXAMPLES}. Jamais de phrases commerciales, jamais de tournures rédigées à la première personne.
 4. Pour chaque tâche, si un ou plusieurs repères "[Photo N]" étaient à proximité dans le texte source, référence leur(s) numéro(s) N dans le champ "photos" (entiers). Ne laisse jamais "[Photo N]" dans le texte de la tâche.
 5. N'invente aucune information absente du texte source.
 

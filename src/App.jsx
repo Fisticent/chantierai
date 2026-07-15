@@ -3,7 +3,7 @@ import localforage from 'localforage';
 import {
   Mic, MicOff, Camera, Plus, Trash2, Share2, Bell, Sparkles, User, Check, X,
   FileText, AlertTriangle, Users, Edit2, BookOpen, Home, ChevronRight,
-  Download, MessageCircle
+  Download, MessageCircle, Images
 } from 'lucide-react';
 
 localforage.config({ name: 'ChantierExpress', storeName: 'interventions_store' });
@@ -80,8 +80,17 @@ const SEED_INTERVENTIONS = [
   seedIntervention('i3', 'c3', 1, '14:00', 'termine', 'Peinture salon', "Reprise d'enduit et peinture 2 couches dans le salon, 22m². Rebouchage des fissures avant application.", SEED_PHOTOS.painting)
 ];
 
+// Simple monogram logo (SVG data URI, no external file needed) used as a placeholder for the
+// demo artisan profile — replaced instantly once the user uploads their own logo.
+const PLACEHOLDER_LOGO = 'data:image/svg+xml,' + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+    <rect width="200" height="200" rx="36" fill="#26314f"/>
+    <text x="100" y="128" font-family="Outfit, system-ui, sans-serif" font-weight="800" font-size="86" fill="#faf8f5" text-anchor="middle">AP</text>
+  </svg>`
+);
+
 const DEFAULT_ARTISAN = {
-  logo: '', company: 'Artis’Pro Bâtiment', contact: 'Julien Moreau',
+  logo: PLACEHOLDER_LOGO, company: 'Artis’Pro Bâtiment', contact: 'Julien Moreau',
   job: 'Plombier - Électricien', phone: '06 70 11 22 33', email: 'contact@artispro-batiment.fr',
   address: '3 rue de l’Industrie, 69100 Villeurbanne'
 };
@@ -135,7 +144,7 @@ function App() {
 
   // ---- Load persisted data on start (seed demo data once, on the very first launch) ----
   useEffect(() => {
-    const SEED_VERSION = 2; // bump to re-seed everyone once (e.g. when seed photos change)
+    const SEED_VERSION = 3; // bump to re-seed everyone once (e.g. when seed photos/logo change)
     Promise.all([
       loadPersisted('seedVersion', 0),
       loadPersisted('clients', []),
@@ -1089,8 +1098,12 @@ Texte dicté :
                     <button className="photo-thumb-remove" onClick={() => removePhoto(p.id)}><X size={11} /></button>
                   </div>
                 ))}
-                <label className="photo-add-btn" title="Prendre ou importer des photos">
+                <label className="photo-add-btn" title="Prendre une photo">
                   <Camera size={20} />
+                  <input type="file" accept="image/*" capture="environment" onChange={onPhotosChange} style={{ display: 'none' }} />
+                </label>
+                <label className="photo-add-btn" title="Choisir depuis la bibliothèque">
+                  <Images size={20} />
                   <input type="file" accept="image/*" multiple onChange={onPhotosChange} style={{ display: 'none' }} />
                 </label>
               </div>

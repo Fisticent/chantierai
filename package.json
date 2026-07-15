@@ -1,0 +1,25 @@
+{
+  "name": "chantierexpress",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "oxlint"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "localforage": "^1.10.0",
+    "lucide-react": "^0.462.0",
+    "jspdf": "^2.5.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-basic-ssl": "^1.2.0",
+    "vite": "^6.0.0",
+    "oxlint": "^0.15.0"
+  }
+}

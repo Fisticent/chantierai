@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/modernist-5a7b829d-1678-49eb-a083-3a3c7c7310c4/styles.css">
+  <script src="_ds/modernist-5a7b829d-1678-49eb-a083-3a3c7c7310c4/_ds_bundle.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap">
+  <style>
+    :root {
+      --color-bg: #faf8f5;
+      --color-surface: #ffffff;
+      --color-text: #1c1b19;
+      --color-divider: rgba(28,27,25,0.12);
+
+      --color-accent: #26314f;
+      --color-accent-2: #26314f;
+
+      --color-neutral-100: #f7f5f1;
+      --color-neutral-200: #ece9e2;
+      --color-neutral-300: #ddd7cc;
+      --color-neutral-400: #c3bcac;
+      --color-neutral-500: #a89f8b;
+      --color-neutral-600: #8a8170;
+      --color-neutral-700: #6b6352;
+      --color-neutral-800: #4a4437;
+      --color-neutral-900: #242019;
+
+      --color-accent-100: #eef0f5;
+      --color-accent-200: #d8dce8;
+      --color-accent-300: #b7c0d6;
+      --color-accent-400: #8592b3;
+      --color-accent-500: #566389;
+      --color-accent-600: #384467;
+      --color-accent-700: #26314f;
+      --color-accent-800: #1a2340;
+      --color-accent-900: #10162c;
+
+      --color-accent-2-100: #eef0f5;
+      --color-accent-2-200: #d8dce8;
+      --color-accent-2-300: #b7c0d6;
+      --color-accent-2-400: #8592b3;
+      --color-accent-2-500: #566389;
+      --color-accent-2-600: #384467;
+      --color-accent-2-700: #26314f;
+      --color-accent-2-800: #1a2340;
+      --color-accent-2-900: #10162c;
+
+      --font-heading: "Outfit", system-ui, sans-serif;
+      --font-heading-weight: 700;
+      --font-body: "Outfit", system-ui, sans-serif;
+
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 20px;
+
+      --shadow-sm: 0 1px 3px rgba(28,27,25,0.07);
+      --shadow-md: 0 8px 24px rgba(28,27,25,0.09);
+      --shadow-lg: 0 24px 60px rgba(28,27,25,0.18);
+    }
+    html, body { margin: 0; background: #ece9e2; font-family: "Outfit", system-ui, sans-serif; }
+    .phone-shell { max-width: 480px; margin: 0 auto; min-height: 100vh; background: var(--color-bg); position: relative; display: flex; flex-direction: column; }
+    input[type="file"] { display: none; }
+    ::-webkit-scrollbar { width: 0; height: 0; }
+    .tap { -webkit-tap-highlight-color: transparent; }
+    @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.35 } }
+  </style>
+</helmet>
+
+<div class="phone-shell">
+
+  <!-- ═══════════════ HEADER ═══════════════ -->
+  <header style="display:flex;align-items:center;gap:12px;padding:16px 20px 14px;border-bottom:2px solid var(--color-divider);background:var(--color-bg);position:sticky;top:0;z-index:20">
+    <sc-if value="{{ artisan.logo }}" hint-placeholder-val="{{ false }}">
+      <img src="{{ artisan.logo }}" style="width:40px;height:40px;object-fit:cover;border:1px solid var(--color-divider);border-radius:var(--radius-md)"/>
+    </sc-if>
+    <sc-if value="{{ artisanLogoMissing }}" hint-placeholder-val="{{ true }}">
+      <div style="width:40px;height:40px;background:var(--color-accent);color:var(--color-bg);display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:16px;flex:none;border-radius:var(--radius-md)">{{ artisanInitial }}</div>
+    </sc-if>
+    <div style="flex:1;min-width:0">
+      <div style="font-family:var(--font-heading);font-weight:800;font-size:16px;line-height:1.1">{{ tabTitle }}</div>
+      <div style="font-size:11px;color:color-mix(in srgb, var(--color-text) 55%, transparent)">{{ artisan.company }}</div>
+    </div>
+  </header>
+
+  <!-- ═══════════════ INSTALL BANNER ═══════════════ -->
+  <sc-if value="{{ showInstallBanner }}" hint-placeholder-val="{{ false }}">
+    <div class="tap" style="display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--color-neutral-900);color:var(--color-bg);border-radius:0 0 var(--radius-lg) var(--radius-lg)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <div style="flex:1;font-size:12.5px;line-height:1.35">Installe l'app sur ton écran d'accueil pour l'utiliser hors-ligne, même sans réseau chantier.</div>
+      <button class="tap" onClick="{{ installApp }}" style="flex:none;background:var(--color-accent);color:var(--color-bg);border:0;border-radius:var(--radius-sm);font-family:var(--font-heading);font-weight:700;font-size:11.5px;padding:8px 12px;cursor:pointer">Installer</button>
+      <button class="tap" onClick="{{ dismissInstall }}" style="flex:none;background:transparent;border:0;color:var(--color-bg);opacity:.6;cursor:pointer;padding:4px" aria-label="Fermer">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </sc-if>
+
+  <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
+  <main style="flex:1;padding:18px 20px 110px;overflow-y:auto">
+
+    <!-- ---------- TAB: JOURNAL ---------- -->
+    <sc-if value="{{ isJournal }}" hint-placeholder-val="{{ true }}">
+      <div data-screen-label="Journal de chantier">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:22px">
+          <div style="background:var(--color-surface);padding:18px;border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)">
+            <div style="font-family:var(--font-heading);font-weight:700;font-size:30px;line-height:1">{{ totalCount }}</div>
+            <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb, var(--color-text) 55%, transparent);margin-top:6px">Interventions</div>
+          </div>
+          <div style="background:var(--color-surface);padding:18px;border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)">
+            <div style="font-family:var(--font-heading);font-weight:700;font-size:30px;line-height:1;color:var(--color-accent-700)">{{ doneCount }}</div>
+            <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:color-mix(in srgb, var(--color-text) 55%, transparent);margin-top:6px">Terminées</div>
+          </div>
+        </div>
+
+        <button class="tap btn btn-primary btn-block" onClick="{{ openNewIntervention }}" style="min-height:52px;font-size:14px;margin-bottom:22px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          &nbsp;Nouvelle Fiche
+        </button>
+
+        <sc-if value="{{ hasInterventions }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <sc-for list="{{ interventions }}" as="interv" hint-placeholder-count="3">
+              <div style="border:1px solid var(--color-divider);background:var(--color-surface);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow-sm)">
+                <div style="padding:14px 16px 0">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+                    <div>
+                      <div style="font-family:var(--font-heading);font-weight:700;font-size:15.5px">{{ interv.clientName }}</div>
+                      <div style="font-size:11px;color:color-mix(in srgb, var(--color-text) 55%, transparent);margin-top:2px">{{ interv.dateLabel }} · {{ interv.time }}</div>
+                    </div>
+                    <span class="tag {{ interv.statusTagClass }}" style="flex:none">{{ interv.statusLabel }}</span>
+                  </div>
+                  <p style="font-size:13px;margin:10px 0 0;opacity:.85;white-space:pre-wrap">{{ interv.descriptionExcerpt }}</p>
+                </div>
+
+                <sc-if value="{{ interv.hasPhotos }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;gap:6px;padding:12px 16px 0;overflow-x:auto">
+                    <sc-for list="{{ interv.photos }}" as="photo" hint-placeholder-count="2">
+                      <sc-if value="{{ photo.url }}" hint-placeholder-val="{{ false }}">
+                        <img src="{{ photo.url }}" style="width:56px;height:56px;object-fit:cover;flex:none;border:1px solid var(--color-divider);border-radius:var(--radius-sm)"/>
+                      </sc-if>
+                      <sc-if value="{{ photo.isPlaceholder }}" hint-placeholder-val="{{ true }}">
+                        <div style="width:56px;height:56px;flex:none;background:var(--color-neutral-300);display:flex;align-items:center;justify-content:center;filter:grayscale(1);border-radius:var(--radius-sm)">
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-neutral-700)" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="0"/><circle cx="8.5" cy="10.5" r="1.5"/><path d="M21 15l-5-5L5 19"/></svg>
+                        </div>
+                      </sc-if>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <div style="display:flex;border-top:1px solid var(--color-divider);margin-top:12px">
+                  <button class="tap" onClick="{{ interv.onPdf }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:11px 4px;background:transparent;border:0;border-right:1px solid var(--color-divider);cursor:pointer;min-height:48px;color:var(--color-text)">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/><line x1="9" y1="11" x2="12" y2="11"/></svg>
+                    <span style="font-size:9.5px;letter-spacing:.03em">PDF</span>
+                  </button>
+                  <button class="tap" onClick="{{ interv.onShare }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:11px 4px;background:transparent;border:0;border-right:1px solid var(--color-divider);cursor:pointer;min-height:48px;color:#25a95a">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                    <span style="font-size:9.5px;letter-spacing:.03em">WhatsApp</span>
+                  </button>
+                  <button class="tap" onClick="{{ interv.onEdit }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:11px 4px;background:transparent;border:0;border-right:1px solid var(--color-divider);cursor:pointer;min-height:48px;color:var(--color-text)">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
+                    <span style="font-size:9.5px;letter-spacing:.03em">Modifier</span>
+                  </button>
+                  <button class="tap" onClick="{{ interv.onDelete }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:11px 4px;background:transparent;border:0;cursor:pointer;min-height:48px;color:var(--color-accent-700)">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    <span style="font-size:9.5px;letter-spacing:.03em">Supprimer</span>
+                  </button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ hasNoInterventions }}" hint-placeholder-val="{{ false }}">
+          <div style="text-align:center;padding:18px 4px 8px">
+            <h4 style="margin-bottom:6px">Aucune fiche pour l'instant</h4>
+            <p style="font-size:13px;opacity:.7;margin-bottom:26px">Crée ta première fiche d'intervention en 4 étapes.</p>
+            <div style="display:flex;flex-direction:column;gap:14px;text-align:left">
+              <div style="display:flex;gap:14px;align-items:flex-start">
+                <div style="flex:none;width:30px;height:30px;background:var(--color-accent-100);color:var(--color-accent-800);font-family:var(--font-heading);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;border-radius:50%">1</div>
+                <div style="padding-top:4px"><div style="font-family:var(--font-heading);font-weight:700;font-size:13.5px">Choisir un client</div><div style="font-size:12.5px;opacity:.7">Sélectionne une fiche dans l'annuaire, ou crée-la à la volée.</div></div>
+              </div>
+              <div style="display:flex;gap:14px;align-items:flex-start">
+                <div style="flex:none;width:30px;height:30px;background:var(--color-accent-100);color:var(--color-accent-800);font-family:var(--font-heading);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;border-radius:50%">2</div>
+                <div style="padding-top:4px"><div style="font-family:var(--font-heading);font-weight:700;font-size:13.5px">Dicter l'intervention</div><div style="font-size:12.5px;opacity:.7">Appuie sur le micro et décris les travaux à voix haute.</div></div>
+              </div>
+              <div style="display:flex;gap:14px;align-items:flex-start">
+                <div style="flex:none;width:30px;height:30px;background:var(--color-accent-100);color:var(--color-accent-800);font-family:var(--font-heading);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;border-radius:50%">3</div>
+                <div style="padding-top:4px"><div style="font-family:var(--font-heading);font-weight:700;font-size:13.5px">Optimiser le texte</div><div style="font-size:12.5px;opacity:.7">L'IA structure ta description en tâches claires.</div></div>
+              </div>
+              <div style="display:flex;gap:14px;align-items:flex-start">
+                <div style="flex:none;width:30px;height:30px;background:var(--color-accent-100);color:var(--color-accent-800);font-family:var(--font-heading);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;border-radius:50%">4</div>
+                <div style="padding-top:4px"><div style="font-family:var(--font-heading);font-weight:700;font-size:13.5px">Générer le PDF</div><div style="font-size:12.5px;opacity:.7">Exporte ou partage le rapport en un geste.</div></div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- ---------- TAB: CLIENTS ---------- -->
+    <sc-if value="{{ isClients }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Annuaire Clients">
+        <button class="tap btn btn-primary btn-block" onClick="{{ openNewClient }}" style="min-height:52px;font-size:14px;margin-bottom:20px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          &nbsp;Nouveau Client
+        </button>
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <sc-for list="{{ clients }}" as="client" hint-placeholder-count="3">
+            <div class="tap" onClick="{{ client.onOpen }}" style="cursor:pointer;padding:14px 6px;border-bottom:1px solid var(--color-divider);display:flex;align-items:center;gap:12px;border-radius:var(--radius-md)">
+              <div style="flex:none;width:38px;height:38px;background:var(--color-neutral-200);display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-weight:700;font-size:14px;border-radius:50%">{{ client.initial }}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-family:var(--font-heading);font-weight:700;font-size:14.5px">{{ client.name }}</div>
+                <div style="font-size:12px;opacity:.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ client.subline }}</div>
+              </div>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex:none;opacity:.4"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+          </sc-for>
+        </div>
+        <sc-if value="{{ hasNoClients }}" hint-placeholder-val="{{ false }}">
+          <p style="text-align:center;opacity:.6;font-size:13px;padding:30px 0">Aucun client enregistré.</p>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- ---------- TAB: PROFIL ---------- -->
+    <sc-if value="{{ isProfil }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Profil Artisan">
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:22px">
+          <label class="tap" style="cursor:pointer;flex:none">
+            <sc-if value="{{ artisan.logo }}" hint-placeholder-val="{{ false }}">
+              <img src="{{ artisan.logo }}" style="width:64px;height:64px;object-fit:cover;border:1px solid var(--color-divider);border-radius:var(--radius-md)"/>
+            </sc-if>
+            <sc-if value="{{ artisanLogoMissing }}" hint-placeholder-val="{{ true }}">
+              <div style="width:64px;height:64px;background:var(--color-neutral-200);display:flex;align-items:center;justify-content:center;border-radius:var(--radius-md)">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14"/><circle cx="8.5" cy="10.5" r="1.5"/><path d="M21 15l-5-5L5 19"/></svg>
+              </div>
+            </sc-if>
+            <input type="file" accept="image/*" onChange="{{ onLogoChange }}"/>
+          </label>
+          <div>
+            <div style="font-family:var(--font-heading);font-weight:700;font-size:14px">Logo entreprise</div>
+            <div style="font-size:12px;opacity:.6">Apparaît en en-tête de chaque PDF</div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="field"><label>Nom entreprise</label><input class="input" style="min-height:48px" value="{{ artisan.company }}" onChange="{{ makeArtisanSetter('company') }}"/></div>
+          <div class="field"><label>Nom du contact</label><input class="input" style="min-height:48px" value="{{ artisan.contact }}" onChange="{{ makeArtisanSetter('contact') }}"/></div>
+          <div class="field"><label>Métier / spécialité</label><input class="input" style="min-height:48px" value="{{ artisan.job }}" onChange="{{ makeArtisanSetter('job') }}"/></div>
+          <div class="field"><label>Téléphone</label><input class="input" style="min-height:48px" value="{{ artisan.phone }}" onChange="{{ makeArtisanSetter('phone') }}"/></div>
+          <div class="field"><label>Email</label><input class="input" style="min-height:48px" value="{{ artisan.email }}" onChange="{{ makeArtisanSetter('email') }}"/></div>
+          <div class="field"><label>Adresse professionnelle</label><textarea class="input" style="min-height:64px" value="{{ artisan.address }}" onChange="{{ makeArtisanSetter('address') }}"></textarea></div>
+        </div>
+        <button class="tap btn btn-primary btn-block" onClick="{{ saveArtisan }}" style="min-height:50px;margin-top:20px">{{ artisanSaveLabel }}</button>
+      </div>
+    </sc-if>
+
+    <!-- ---------- TAB: GUIDE ---------- -->
+    <sc-if value="{{ isGuide }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Guide et Aide" style="display:flex;flex-direction:column;gap:2px">
+        <div style="padding:18px 0;border-bottom:2px solid var(--color-divider)">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+            <h4 style="margin:0">Dictée vocale</h4>
+          </div>
+          <p style="font-size:13px;opacity:.75;margin:0">Appuie sur le micro depuis n'importe quel écran pour décrire ton intervention à voix haute — la transcription s'affiche en temps réel, mains libres.</p>
+        </div>
+        <div style="padding:18px 0;border-bottom:2px solid var(--color-divider)">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5L5.7 21l2.3-7.2-6-4.6h7.6z"/></svg>
+            <h4 style="margin:0">Optimisation automatique</h4>
+          </div>
+          <p style="font-size:13px;opacity:.75;margin:0">Le bouton "Optimiser" reformule ta description dictée en tâches claires et structurées, prêtes à être lues par le client.</p>
+        </div>
+        <div style="padding:18px 0">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <h4 style="margin:0">PDF & partage</h4>
+          </div>
+          <p style="font-size:13px;opacity:.75;margin:0">Relis et édite le rapport, génère un PDF avec logo et photos, puis partage-le par WhatsApp ou par email en un geste — tout fonctionne hors-ligne.</p>
+        </div>
+      </div>
+    </sc-if>
+  </main>
+
+  <!-- ═══════════════ BOTTOM NAV ═══════════════ -->
+  <nav style="position:fixed;bottom:0;left:0;right:0;max-width:480px;margin:0 auto;display:flex;align-items:center;background:var(--color-surface);border-top:1px solid var(--color-divider);box-shadow:var(--shadow-md);z-index:30">
+    <button class="tap" onClick="{{ goJournal }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 2px 12px;background:transparent;border:0;cursor:pointer;min-height:56px;color:{{ journalNavColor }}">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span style="font-size:10px;font-family:var(--font-heading);font-weight:600">Journal</span>
+    </button>
+    <button class="tap" onClick="{{ goClients }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 2px 12px;background:transparent;border:0;cursor:pointer;min-height:56px;color:{{ clientsNavColor }}">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span style="font-size:10px;font-family:var(--font-heading);font-weight:600">Clients</span>
+    </button>
+
+    <button class="tap" onClick="{{ openQuickDictation }}" aria-label="Dicter une nouvelle intervention" style="flex:none;width:60px;height:60px;border-radius:50%;background:var(--color-accent);color:var(--color-bg);border:4px solid var(--color-bg);display:flex;align-items:center;justify-content:center;margin-top:-26px;cursor:pointer;box-shadow:var(--shadow-md)">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+    </button>
+
+    <button class="tap" onClick="{{ goProfil }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 2px 12px;background:transparent;border:0;cursor:pointer;min-height:56px;color:{{ profilNavColor }}">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span style="font-size:10px;font-family:var(--font-heading);font-weight:600">Profil</span>
+    </button>
+    <button class="tap" onClick="{{ goGuide }}" style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 2px 12px;background:transparent;border:0;cursor:pointer;min-height:56px;color:{{ guideNavColor }}">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span style="font-size:10px;font-family:var(--font-heading);font-weight:600">Guide</span>
+    </button>
+  </nav>
+
+  <!-- ═══════════════ MODAL: NEW/EDIT INTERVENTION ═══════════════ -->
+  <sc-if value="{{ interventionModalOpen }}" hint-placeholder-val="{{ false }}">
+    <div class="dialog-backdrop" style="align-items:flex-end;padding:0;z-index:100">
+      <div class="dialog" style="width:100%;max-width:480px;border-radius:var(--radius-lg) var(--radius-lg) 0 0;max-height:92vh;overflow-y:auto;gap:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div class="dialog-title">{{ interventionModalTitle }}</div>
+          <button class="tap" onClick="{{ closeInterventionModal }}" style="background:transparent;border:0;cursor:pointer;padding:6px;color:var(--color-text)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+
+        <div class="field">
+          <label>Client</label>
+          <select class="input" style="min-height:48px" value="{{ draft.clientId }}" onChange="{{ onDraftClientChange }}">
+            <option value="">Sélectionner un client…</option>
+            <sc-for list="{{ clients }}" as="client" hint-placeholder-count="3">
+              <option value="{{ client.id }}">{{ client.name }}</option>
+            </sc-for>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Statut</label>
+          <div class="seg">
+            <label class="seg-opt" style="flex:1;justify-content:center;white-space:nowrap"><input type="radio" name="status" checked="{{ draft.isEnCours }}" onChange="{{ setStatusEnCours }}"/>En cours</label>
+            <label class="seg-opt" style="flex:1;justify-content:center;white-space:nowrap"><input type="radio" name="status" checked="{{ draft.isTermine }}" onChange="{{ setStatusTermine }}"/>Terminé</label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Description de l'intervention</label>
+          <textarea class="input" style="min-height:130px" placeholder="Décris les travaux réalisés…" value="{{ draft.description }}" onChange="{{ onDescriptionChange }}"></textarea>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="tap btn btn-secondary" onClick="{{ toggleDictation }}" style="flex:1;min-height:48px;background:{{ micButtonBg }};color:{{ micButtonColor }};border-color:{{ micButtonBorder }}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+              &nbsp;{{ micButtonLabel }}
+            </button>
+            <button class="tap btn" onClick="{{ optimizeText }}" style="flex:1;min-height:48px;background:#5b4fd6;color:#fff;border-radius:var(--radius-md)" disabled="{{ optimizeDisabled }}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2H22l-6 4.6 2.3 7.2-6.3-4.5L5.7 21l2.3-7.2-6-4.6h7.6z"/></svg>
+              &nbsp;{{ optimizeLabel }}
+            </button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Photos de chantier</label>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <sc-for list="{{ draft.photos }}" as="photo" hint-placeholder-count="0">
+              <div style="position:relative;width:64px;height:64px">
+                <img src="{{ photo.url }}" style="width:64px;height:64px;object-fit:cover;border:1px solid var(--color-divider);border-radius:var(--radius-sm)"/>
+                <button class="tap" onClick="{{ photo.onRemove }}" style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;background:var(--color-neutral-900);color:#fff;border:2px solid var(--color-bg);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+              </div>
+            </sc-for>
+            <label class="tap" style="width:64px;height:64px;border:1.5px dashed var(--color-divider);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--color-text)">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              <input type="file" accept="image/*" multiple="{{ true }}" onChange="{{ onPhotosChange }}"/>
+            </label>
+          </div>
+        </div>
+
+        <div class="dialog-actions" style="justify-content:stretch">
+          <button class="tap btn btn-primary btn-block" onClick="{{ saveIntervention }}" disabled="{{ saveInterventionDisabled }}" style="min-height:52px;justify-content:center;text-align:center">Enregistrer la fiche</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ═══════════════ MODAL: CLIENT ═══════════════ -->
+  <sc-if value="{{ clientModalOpen }}" hint-placeholder-val="{{ false }}">
+    <div class="dialog-backdrop" style="z-index:100">
+      <div class="dialog" style="width:min(400px,100%)">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div class="dialog-title">{{ clientModalTitle }}</div>
+          <button class="tap" onClick="{{ closeClientModal }}" style="background:transparent;border:0;cursor:pointer;padding:6px;color:var(--color-text)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="field"><label>Nom</label><input class="input" style="min-height:48px" value="{{ clientDraft.name }}" onChange="{{ makeClientSetter('name') }}"/></div>
+          <div class="field"><label>Société (optionnel)</label><input class="input" style="min-height:48px" value="{{ clientDraft.company }}" onChange="{{ makeClientSetter('company') }}"/></div>
+          <div class="field"><label>Téléphone</label><input class="input" style="min-height:48px" value="{{ clientDraft.phone }}" onChange="{{ makeClientSetter('phone') }}"/></div>
+          <div class="field"><label>Email</label><input class="input" style="min-height:48px" value="{{ clientDraft.email }}" onChange="{{ makeClientSetter('email') }}"/></div>
+          <div class="field"><label>Adresse</label><textarea class="input" style="min-height:60px" value="{{ clientDraft.address }}" onChange="{{ makeClientSetter('address') }}"></textarea></div>
+        </div>
+        <div class="dialog-actions" style="justify-content:space-between">
+          <sc-if value="{{ clientDraft.isEditing }}" hint-placeholder-val="{{ false }}">
+            <button class="tap btn" onClick="{{ deleteClientDraft }}" style="color:var(--color-accent-700)">Supprimer</button>
+          </sc-if>
+          <sc-if value="{{ clientDraftIsNew }}" hint-placeholder-val="{{ true }}"><span></span></sc-if>
+          <button class="tap btn btn-primary" onClick="{{ saveClientDraft }}" disabled="{{ saveClientDisabled }}" style="min-height:44px">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ═══════════════ MODAL: PDF PREVIEW / EXPORT ═══════════════ -->
+  <sc-if value="{{ pdfModalOpen }}" hint-placeholder-val="{{ false }}">
+    <div class="dialog-backdrop" style="align-items:flex-end;padding:0;z-index:100">
+      <div class="dialog" style="width:100%;max-width:480px;border-radius:var(--radius-lg) var(--radius-lg) 0 0;max-height:92vh;overflow-y:auto;gap:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div class="dialog-title">Aperçu du rapport</div>
+          <button class="tap" onClick="{{ closePdfModal }}" style="background:transparent;border:0;cursor:pointer;padding:6px;color:var(--color-text)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="field"><label>Titre du rapport</label><input class="input" style="min-height:48px" value="{{ pdfDraft.title }}" onChange="{{ onPdfTitleChange }}"/></div>
+        <div style="border:1px solid var(--color-divider);border-radius:var(--radius-md);padding:12px;background:var(--color-bg);font-size:12.5px;line-height:1.6">
+          <div style="font-family:var(--font-heading);font-weight:700;margin-bottom:2px">{{ pdfDraft.clientName }}</div>
+          <div style="opacity:.6;margin-bottom:8px">{{ pdfDraft.dateLabel }} · {{ pdfDraft.statusLabel }}</div>
+          <div style="white-space:pre-wrap">{{ pdfDraft.description }}</div>
+        </div>
+        <div class="field"><label>Conclusion</label><textarea class="input" style="min-height:70px" placeholder="Recommandations, points de vigilance…" value="{{ pdfDraft.conclusion }}" onChange="{{ onPdfConclusionChange }}"></textarea></div>
+        <div class="dialog-actions" style="justify-content:stretch;flex-direction:column;gap:8px">
+          <button class="tap btn btn-primary btn-block" onClick="{{ generatePdf }}" style="min-height:52px;justify-content:center;text-align:center">{{ pdfGenerateLabel }}</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- ═══════════════ TOAST ═══════════════ -->
+  <sc-if value="{{ toastMessage }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;bottom:78px;left:50%;transform:translateX(-50%);max-width:calc(480px - 40px);background:var(--color-neutral-900);color:#fff;padding:12px 18px;border-radius:var(--radius-md);font-size:13px;z-index:200;box-shadow:var(--shadow-lg)">{{ toastMessage }}</div>
+  </sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const SEED_CLIENTS = [
+  { id: 'c1', name: 'Martin Dubois', company: 'Dubois Rénovation', phone: '06 12 34 56 78', email: 'martin.dubois@email.fr', address: '12 rue des Lilas, 69003 Lyon' },
+  { id: 'c2', name: 'Sophie Lefèvre', company: 'Cabinet Lefèvre', phone: '06 98 76 54 32', email: 's.lefevre@gmail.com', address: '45 avenue Foch, 69006 Lyon' },
+  { id: 'c3', name: 'Karim Haddad', company: '', phone: '07 45 12 89 33', email: 'karim.haddad@outlook.fr', address: '8 impasse des Vignes, 69008 Lyon' }
+];
+
+function seedIntervention(id, clientId, daysAgo, time, status, title, description, photoCount) {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return {
+    id, clientId, date: d.toISOString(), time, status, title,
+    description, conclusion: '',
+    photos: Array.from({ length: photoCount }, (_, i) => ({ id: id + '-p' + i, url: null, isPlaceholder: true }))
+  };
+}
+
+const SEED_INTERVENTIONS = [
+  seedIntervention('i1', 'c1', 0, '09:15', 'termine', 'Intervention plomberie', "Remplacement du groupe de sécurité et purge du ballon d'eau chaude. Vérification de la pression du circuit. RAS sur le reste de l'installation.", 2),
+  seedIntervention('i2', 'c2', 0, '11:30', 'encours', 'Mise aux normes électriques', "Mise aux normes du tableau électrique — remplacement de 3 disjoncteurs et ajout d'un différentiel 30mA sur le circuit salle de bain.", 1),
+  seedIntervention('i3', 'c3', 1, '14:00', 'termine', 'Peinture salon', "Reprise d'enduit et peinture 2 couches dans le salon, 22m². Rebouchage des fissures avant application.", 3)
+];
+
+const DEFAULT_ARTISAN = {
+  logo: null, company: 'Artis\u2019Pro Bâtiment', contact: 'Julien Moreau',
+  job: 'Plombier - Électricien', phone: '06 70 11 22 33', email: 'contact@artispro-batiment.fr',
+  address: '3 rue de l\u2019Industrie, 69100 Villeurbanne'
+};
+
+const EMPTY_DRAFT = () => ({ id: null, clientId: '', status: 'encours', description: '', photos: [] });
+const EMPTY_CLIENT_DRAFT = () => ({ id: null, name: '', company: '', phone: '', email: '', address: '' });
+
+function loadLS(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; }
+}
+function saveLS(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
+}
+
+class Component extends DCLogic {
+  state = {
+    tab: 'journal',
+    clients: loadLS('cv_clients', SEED_CLIENTS),
+    interventions: loadLS('cv_interventions', SEED_INTERVENTIONS),
+    artisan: loadLS('cv_artisan', DEFAULT_ARTISAN),
+    artisanSaved: false,
+
+    interventionModalOpen: false,
+    draft: EMPTY_DRAFT(),
+    listening: false,
+    optimizing: false,
+
+    clientModalOpen: false,
+    clientDraft: EMPTY_CLIENT_DRAFT(),
+
+    pdfModalOpen: false,
+    pdfIntervId: null,
+    pdfDraft: { title: '', conclusion: '' },
+    pdfGenerating: false,
+
+    showInstallBanner: false,
+    toastMessage: '',
+    installEvent: null
+  };
+
+  componentDidMount() {
+    const visits = loadLS('cv_visits', 0) + 1;
+    saveLS('cv_visits', visits);
+    if (visits >= 3 && !loadLS('cv_install_dismissed', false)) {
+      this.setState({ showInstallBanner: true });
+    }
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      this.setState({ installEvent: e });
+    });
+  }
+
+  persistClients(clients) { saveLS('cv_clients', clients); }
+  persistInterventions(interventions) { saveLS('cv_interventions', interventions); }
+  persistArtisan(artisan) { saveLS('cv_artisan', artisan); }
+
+  showToast(msg) {
+    this.setState({ toastMessage: msg });
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => this.setState({ toastMessage: '' }), 2600);
+  }
+
+  dismissInstall() {
+    saveLS('cv_install_dismissed', true);
+    this.setState({ showInstallBanner: false });
+  }
+
+  installApp() {
+    const e = this.state.installEvent;
+    if (e) {
+      e.prompt();
+      this.setState({ showInstallBanner: false, installEvent: null });
+    } else {
+      this.showToast("Utilise le menu de ton navigateur → \u00ab Ajouter à l'écran d'accueil \u00bb");
+      this.setState({ showInstallBanner: false });
+    }
+  }
+
+  // ---- nav ----
+  goJournal() { this.setState({ tab: 'journal' }); }
+  goClients() { this.setState({ tab: 'clients' }); }
+  goProfil() { this.setState({ tab: 'profil' }); }
+  goGuide() { this.setState({ tab: 'guide' }); }
+
+  // ---- clients ----
+  openNewClient() { this.setState({ clientModalOpen: true, clientDraft: EMPTY_CLIENT_DRAFT() }); }
+  openClientEdit(id) {
+    const c = this.state.clients.find(c => c.id === id);
+    this.setState({ clientModalOpen: true, clientDraft: { ...c, isEditing: true } });
+  }
+  closeClientModal() { this.setState({ clientModalOpen: false }); }
+  makeClientSetter(field) {
+    return (e) => {
+      const val = e.target.value;
+      this.setState(s => ({ clientDraft: { ...s.clientDraft, [field]: val } }));
+    };
+  }
+  saveClientDraft() {
+    const d = this.state.clientDraft;
+    if (!d.name || !d.name.trim()) return;
+    let clients;
+    if (d.id) {
+      clients = this.state.clients.map(c => c.id === d.id ? { ...d } : c);
+    } else {
+      clients = [...this.state.clients, { ...d, id: 'c' + Date.now() }];
+    }
+    this.persistClients(clients);
+    this.setState({ clients, clientModalOpen: false });
+    this.showToast('Client enregistré');
+  }
+  deleteClientDraft() {
+    const id = this.state.clientDraft.id;
+    const clients = this.state.clients.filter(c => c.id !== id);
+    this.persistClients(clients);
+    this.setState({ clients, clientModalOpen: false });
+    this.showToast('Client supprimé');
+  }
+
+  // ---- intervention modal ----
+  openNewIntervention() { this.setState({ interventionModalOpen: true, draft: EMPTY_DRAFT() }); }
+  openQuickDictation() {
+    this.setState({ interventionModalOpen: true, draft: EMPTY_DRAFT() });
+    setTimeout(() => this.toggleDictation(), 250);
+  }
+  openInterventionEdit(id) {
+    const it = this.state.interventions.find(i => i.id === id);
+    this.setState({
+      interventionModalOpen: true,
+      draft: { id: it.id, clientId: it.clientId, status: it.status, description: it.description, photos: it.photos.filter(p => p.url) }
+    });
+  }
+  closeInterventionModal() {
+    if (this.recognition) { try { this.recognition.stop(); } catch (e) {} }
+    this.setState({ interventionModalOpen: false, listening: false });
+  }
+  onDraftClientChange(e) {
+    const clientId = e.target.value;
+    this.setState(s => ({ draft: { ...s.draft, clientId } }));
+  }
+  setStatusEnCours() { this.setState(s => ({ draft: { ...s.draft, status: 'encours' } })); }
+  setStatusTermine() { this.setState(s => ({ draft: { ...s.draft, status: 'termine' } })); }
+  onDescriptionChange(e) {
+    const description = e.target.value;
+    this.setState(s => ({ draft: { ...s.draft, description } }));
+  }
+
+  toggleDictation() {
+    if (this.state.listening) {
+      if (this.recognition) try { this.recognition.stop(); } catch (e) {}
+      this.setState({ listening: false });
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      this.showToast('Reconnaissance vocale non supportée sur ce navigateur.');
+      return;
+    }
+    const rec = new SR();
+    rec.lang = 'fr-FR';
+    rec.continuous = true;
+    rec.interimResults = true;
+    this._baseDescription = this.state.draft.description || '';
+    rec.onresult = (ev) => {
+      let finalText = '';
+      let interim = '';
+      for (let i = 0; i < ev.results.length; i++) {
+        const t = ev.results[i][0].transcript;
+        if (ev.results[i].isFinal) finalText += t + ' '; else interim += t;
+      }
+      const sep = this._baseDescription && !this._baseDescription.endsWith(' ') ? ' ' : '';
+      const combined = (this._baseDescription + sep + finalText + interim).trim();
+      this.setState(s => ({ draft: { ...s.draft, description: combined } }));
+    };
+    rec.onend = () => { this.setState({ listening: false }); };
+    rec.onerror = () => { this.setState({ listening: false }); this.showToast('Micro indisponible ou permission refusée.'); };
+    try { rec.start(); this.recognition = rec; this.setState({ listening: true }); }
+    catch (e) { this.showToast('Impossible de démarrer le micro.'); }
+  }
+
+  async optimizeText() {
+    const raw = (this.state.draft.description || '').trim();
+    if (!raw) { this.showToast('Dicte ou saisis d\u2019abord une description.'); return; }
+    this.setState({ optimizing: true });
+    try {
+      const prompt = "Tu es un assistant qui aide des artisans du bâtiment à rédiger leurs comptes-rendus d'intervention. Réécris le texte suivant en français, de façon professionnelle, claire et concise, sous forme de courtes tâches structurées (une par ligne, commençant par un tiret). N'invente aucune information technique qui ne soit pas dans le texte original. Texte dicté par l'artisan :\n\n" + raw;
+      const result = await window.claude.complete(prompt);
+      this.setState(s => ({ draft: { ...s.draft, description: (result || raw).trim() }, optimizing: false }));
+      this.showToast('Texte optimisé');
+    } catch (e) {
+      this.setState({ optimizing: false });
+      this.showToast('Optimisation indisponible pour le moment.');
+    }
+  }
+
+  onPhotosChange(e) {
+    const files = Array.from(e.target.files || []);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        this.setState(s => ({
+          draft: { ...s.draft, photos: [...s.draft.photos, { id: 'p' + Date.now() + Math.random(), url: ev.target.result }] }
+        }));
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  }
+  removePhoto(photoId) {
+    this.setState(s => ({ draft: { ...s.draft, photos: s.draft.photos.filter(p => p.id !== photoId) } }));
+  }
+
+  saveIntervention() {
+    const d = this.state.draft;
+    if (!d.clientId || !d.description.trim()) return;
+    let interventions;
+    const now = new Date();
+    if (d.id) {
+      interventions = this.state.interventions.map(it => it.id === d.id
+        ? { ...it, clientId: d.clientId, status: d.status, description: d.description, photos: d.photos }
+        : it);
+    } else {
+      interventions = [{
+        id: 'i' + Date.now(), clientId: d.clientId, date: now.toISOString(),
+        time: now.toTimeString().slice(0, 5), status: d.status, title: 'Intervention',
+        description: d.description, conclusion: '', photos: d.photos
+      }, ...this.state.interventions];
+    }
+    this.persistInterventions(interventions);
+    this.setState({ interventions, interventionModalOpen: false, listening: false });
+    this.showToast('Fiche enregistrée');
+  }
+
+  deleteIntervention(id) {
+    const interventions = this.state.interventions.filter(i => i.id !== id);
+    this.persistInterventions(interventions);
+    this.setState({ interventions });
+    this.showToast('Fiche supprimée');
+  }
+
+  // ---- profil ----
+  makeArtisanSetter(field) {
+    return (e) => {
+      const val = e.target.value;
+      this.setState(s => ({ artisan: { ...s.artisan, [field]: val }, artisanSaved: false }));
+    };
+  }
+  onLogoChange(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      this.setState(s => ({ artisan: { ...s.artisan, logo: ev.target.result }, artisanSaved: false }));
+    };
+    reader.readAsDataURL(file);
+  }
+  saveArtisan() {
+    this.persistArtisan(this.state.artisan);
+    this.setState({ artisanSaved: true });
+    this.showToast('Profil enregistré');
+    clearTimeout(this._savedTimer);
+    this._savedTimer = setTimeout(() => this.setState({ artisanSaved: false }), 2000);
+  }
+
+  // ---- PDF ----
+  openPdfModal(id) {
+    const it = this.state.interventions.find(i => i.id === id);
+    this.setState({
+      pdfModalOpen: true, pdfIntervId: id,
+      pdfDraft: { title: it.title || 'Rapport d\u2019intervention', conclusion: it.conclusion || '' }
+    });
+  }
+  closePdfModal() { this.setState({ pdfModalOpen: false }); }
+  onPdfTitleChange(e) {
+    const title = e.target.value;
+    this.setState(s => ({ pdfDraft: { ...s.pdfDraft, title } }));
+  }
+  onPdfConclusionChange(e) {
+    const conclusion = e.target.value;
+    this.setState(s => ({ pdfDraft: { ...s.pdfDraft, conclusion } }));
+  }
+
+  generatePdf() {
+    const it = this.state.interventions.find(i => i.id === this.state.pdfIntervId);
+    if (!it) return;
+    const client = this.state.clients.find(c => c.id === it.clientId);
+    const artisan = this.state.artisan;
+    const { title, conclusion } = this.state.pdfDraft;
+
+    // persist edits back onto the intervention
+    const interventions = this.state.interventions.map(i => i.id === it.id ? { ...i, title, conclusion } : i);
+    this.persistInterventions(interventions);
+    this.setState({ interventions });
+
+    if (!window.jspdf) { this.showToast('Générateur PDF non chargé.'); return; }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    let y = 48;
+
+    if (artisan.logo) {
+      try { doc.addImage(artisan.logo, 'JPEG', 40, y, 48, 48); } catch (e) {}
+    }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+    doc.text(artisan.company || '', 100, y + 16);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text([artisan.contact, artisan.job, artisan.phone, artisan.email].filter(Boolean).join(' · '), 100, y + 30);
+    doc.text(artisan.address || '', 100, y + 42);
+    y += 70;
+    doc.setDrawColor(180); doc.line(40, y, pageW - 40, y); y += 26;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+    doc.text(title || 'Rapport d\u2019intervention', 40, y); y += 26;
+
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+    const dateStr = new Date(it.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    doc.text(`Client : ${client ? client.name : ''}${client && client.company ? ' — ' + client.company : ''}`, 40, y); y += 16;
+    doc.text(`Date : ${dateStr} à ${it.time}   ·   Statut : ${it.status === 'termine' ? 'Terminé' : 'En cours'}`, 40, y); y += 24;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+    doc.text('Description des travaux', 40, y); y += 16;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+    const lines = doc.splitTextToSize(it.description || '', pageW - 80);
+    doc.text(lines, 40, y); y += lines.length * 13 + 16;
+
+    if (conclusion && conclusion.trim()) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+      doc.text('Conclusion', 40, y); y += 16;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+      const clines = doc.splitTextToSize(conclusion, pageW - 80);
+      doc.text(clines, 40, y); y += clines.length * 13 + 16;
+    }
+
+    const realPhotos = (it.photos || []).filter(p => p.url);
+    if (realPhotos.length) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+      if (y > 650) { doc.addPage(); y = 48; }
+      doc.text('Photos', 40, y); y += 14;
+      let x = 40;
+      realPhotos.forEach((p, idx) => {
+        if (x + 150 > pageW - 40) { x = 40; y += 150; }
+        if (y + 150 > 780) { doc.addPage(); y = 48; x = 40; }
+        try { doc.addImage(p.url, 'JPEG', x, y, 140, 140); } catch (e) {}
+        x += 150;
+      });
+    }
+
+    const fname = `rapport-${(client ? client.name : 'client').replace(/\s+/g, '-').toLowerCase()}-${it.date.slice(0, 10)}.pdf`;
+    doc.save(fname);
+    this.showToast('PDF généré');
+    this.setState({ pdfModalOpen: false });
+  }
+
+  buildShareText(it) {
+    const client = this.state.clients.find(c => c.id === it.clientId);
+    const dateStr = new Date(it.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    return `Rapport d'intervention — ${client ? client.name : ''}\n${dateStr} à ${it.time} (${it.status === 'termine' ? 'Terminé' : 'En cours'})\n\n${it.description}`;
+  }
+
+  async shareWhatsapp(id) {
+    const it = this.state.interventions.find(i => i.id === id);
+    const text = this.buildShareText(it);
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Rapport d\u2019intervention', text }); return; }
+      catch (e) { /* fall through */ }
+    }
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  }
+
+  shareEmail(id) {
+    const it = this.state.interventions.find(i => i.id === id);
+    const text = this.buildShareText(it);
+    window.location.href = 'mailto:?subject=' + encodeURIComponent('Rapport d\u2019intervention') + '&body=' + encodeURIComponent(text);
+  }
+
+  renderVals() {
+    const s = this.state;
+    const tabTitles = { journal: 'Journal de chantier', clients: 'Annuaire Clients', profil: 'Profil Artisan', guide: 'Guide & Aide' };
+    const navColor = (t) => s.tab === t ? 'var(--color-accent)' : 'var(--color-text)';
+
+    const clientsById = {};
+    s.clients.forEach(c => clientsById[c.id] = c);
+
+    const interventions = [...s.interventions]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .map(it => {
+        const client = clientsById[it.clientId];
+        const dateObj = new Date(it.date);
+        const today = new Date();
+        const isToday = dateObj.toDateString() === today.toDateString();
+        const yest = new Date(today); yest.setDate(yest.getDate() - 1);
+        const isYest = dateObj.toDateString() === yest.toDateString();
+        const dateLabel = isToday ? "Aujourd'hui" : isYest ? 'Hier' : dateObj.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+        return {
+          id: it.id,
+          clientName: client ? client.name : 'Client supprimé',
+          dateLabel, time: it.time,
+          statusLabel: it.status === 'termine' ? 'Terminé' : 'En cours',
+          statusTagClass: it.status === 'termine' ? 'tag-accent' : 'tag-neutral',
+          descriptionExcerpt: it.description,
+          hasPhotos: (it.photos || []).length > 0,
+          photos: it.photos,
+          onPdf: () => this.openPdfModal(it.id),
+          onShare: () => this.shareWhatsapp(it.id),
+          onEdit: () => this.openInterventionEdit(it.id),
+          onDelete: () => this.deleteIntervention(it.id)
+        };
+      });
+
+    const clients = s.clients.map(c => ({
+      id: c.id, name: c.name,
+      initial: (c.name || '?').trim().charAt(0).toUpperCase(),
+      subline: [c.company, c.phone].filter(Boolean).join(' · '),
+      onOpen: () => this.openClientEdit(c.id)
+    }));
+
+    const draftClient = clientsById[s.draft.clientId];
+    const pdfIt = s.interventions.find(i => i.id === s.pdfIntervId);
+    const pdfClient = pdfIt ? clientsById[pdfIt.clientId] : null;
+
+    return {
+      tab: s.tab, tabTitle: tabTitles[s.tab],
+      isJournal: s.tab === 'journal', isClients: s.tab === 'clients', isProfil: s.tab === 'profil', isGuide: s.tab === 'guide',
+      journalNavColor: navColor('journal'), clientsNavColor: navColor('clients'), profilNavColor: navColor('profil'), guideNavColor: navColor('guide'),
+      goJournal: () => this.goJournal(), goClients: () => this.goClients(), goProfil: () => this.goProfil(), goGuide: () => this.goGuide(),
+      openQuickDictation: () => this.openQuickDictation(),
+
+      artisan: s.artisan,
+      artisanLogoMissing: !s.artisan.logo,
+      artisanInitial: (s.artisan.company || '?').trim().charAt(0).toUpperCase(),
+      artisanSaveLabel: s.artisanSaved ? 'Enregistré ✓' : 'Enregistrer le profil',
+      makeArtisanSetter: (f) => this.makeArtisanSetter(f),
+      onLogoChange: (e) => this.onLogoChange(e),
+      saveArtisan: () => this.saveArtisan(),
+
+      totalCount: s.interventions.length,
+      doneCount: s.interventions.filter(i => i.status === 'termine').length,
+      hasInterventions: interventions.length > 0,
+      hasNoInterventions: interventions.length === 0,
+      interventions,
+      openNewIntervention: () => this.openNewIntervention(),
+
+      clients, hasNoClients: clients.length === 0,
+      openNewClient: () => this.openNewClient(),
+
+      clientModalOpen: s.clientModalOpen,
+      clientModalTitle: s.clientDraft.id ? 'Modifier le client' : 'Nouveau client',
+      clientDraft: { ...s.clientDraft, isEditing: !!s.clientDraft.id },
+      clientDraftIsNew: !s.clientDraft.id,
+      closeClientModal: () => this.closeClientModal(),
+      makeClientSetter: (f) => this.makeClientSetter(f),
+      saveClientDraft: () => this.saveClientDraft(),
+      deleteClientDraft: () => this.deleteClientDraft(),
+      saveClientDisabled: !(s.clientDraft.name || '').trim(),
+
+      interventionModalOpen: s.interventionModalOpen,
+      interventionModalTitle: s.draft.id ? 'Modifier la fiche' : 'Nouvelle fiche d\u2019intervention',
+      draft: {
+        ...s.draft,
+        isEnCours: s.draft.status === 'encours',
+        isTermine: s.draft.status === 'termine',
+        photos: s.draft.photos.map(p => ({ ...p, onRemove: () => this.removePhoto(p.id) }))
+      },
+      closeInterventionModal: () => this.closeInterventionModal(),
+      onDraftClientChange: (e) => this.onDraftClientChange(e),
+      setStatusEnCours: () => this.setStatusEnCours(),
+      setStatusTermine: () => this.setStatusTermine(),
+      onDescriptionChange: (e) => this.onDescriptionChange(e),
+      toggleDictation: () => this.toggleDictation(),
+      micButtonLabel: s.listening ? 'Écoute…' : 'Dicter',
+      micButtonBg: s.listening ? 'var(--color-accent)' : 'transparent',
+      micButtonColor: s.listening ? 'var(--color-bg)' : 'var(--color-text)',
+      micButtonBorder: s.listening ? 'var(--color-accent)' : 'var(--color-divider)',
+      optimizeText: () => this.optimizeText(),
+      optimizeLabel: s.optimizing ? 'Optimisation…' : 'Optimiser',
+      optimizeDisabled: s.optimizing || !(s.draft.description || '').trim(),
+      onPhotosChange: (e) => this.onPhotosChange(e),
+      saveIntervention: () => this.saveIntervention(),
+      saveInterventionDisabled: !s.draft.clientId || !(s.draft.description || '').trim(),
+
+      pdfModalOpen: s.pdfModalOpen,
+      pdfDraft: {
+        ...s.pdfDraft,
+        clientName: pdfClient ? pdfClient.name : '',
+        dateLabel: pdfIt ? new Date(pdfIt.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : '',
+        statusLabel: pdfIt ? (pdfIt.status === 'termine' ? 'Terminé' : 'En cours') : '',
+        description: pdfIt ? pdfIt.description : ''
+      },
+      closePdfModal: () => this.closePdfModal(),
+      onPdfTitleChange: (e) => this.onPdfTitleChange(e),
+      onPdfConclusionChange: (e) => this.onPdfConclusionChange(e),
+      generatePdf: () => this.generatePdf(),
+      pdfGenerateLabel: 'Générer le PDF',
+
+      showInstallBanner: s.showInstallBanner,
+      dismissInstall: () => this.dismissInstall(),
+      installApp: () => this.installApp(),
+      toastMessage: s.toastMessage
+    };
+  }
+}
+
+</script>
+</body>
+</html>

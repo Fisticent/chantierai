@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+
+# Documents clients réels (tiers, données personnelles) — ne pas publier
+compte_rendu_exemples/
+
+# Runtime tiers du générateur de maquette (non utilisé par l'app, pas notre code)
+support.js
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store

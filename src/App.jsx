@@ -1,0 +1,1171 @@
+import React, { useState, useEffect, useRef } from 'react';
+import localforage from 'localforage';
+import {
+  Mic, MicOff, Camera, Plus, Trash2, Share2, Bell, Sparkles, User, Check, X,
+  FileText, AlertTriangle, Users, Edit2, BookOpen, Home, ChevronRight,
+  Download, MessageCircle
+} from 'lucide-react';
+
+localforage.config({ name: 'ChantierExpress', storeName: 'interventions_store' });
+
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY || '';
+
+// Vocabulaire et style extraits de comptes rendus de chantier réels (dossier
+// compte_rendu_exemples/) — utilisés pour guider Groq Whisper (paramètre "prompt",
+// qui biaise la reconnaissance vers un vocabulaire donné) et pour aider Gemini à
+// corriger le jargon métier mal transcrit.
+const TRADE_VOCABULARY = [
+  'tapée', 'plinthe', 'frisette', 'faïence', 'crépis', 'seuil', 'chape', 'gaine',
+  'VMC', 'faux-plafond', 'cloison', 'huisserie', 'galandage', 'calepinage',
+  'coffret', 'mitigeur', 'SDB', 'placo', 'goulotte', 'boisseau', 'encadrement',
+  'niche', 'menuiserie', 'agencement', 'carrelage', 'chauffe-eau',
+  'groupe de sécurité', 'disjoncteur', 'différentiel', 'étanchéité', 'ragréage',
+  'banc-coffre', 'fenestron', 'balustrade', 'muret', 'poutre', 'corps encastré',
+  'coffret gaz', 'tuyau de gaz', 'siphon', 'robinetterie', 'insert', 'hammam',
+  'sauna', 'adoucisseur', 'porte à galandage', 'porte accordéon', 'variateur'
+].join(', ');
+
+const GROQ_TRANSCRIPTION_PROMPT =
+  `Compte rendu de chantier en français. Vocabulaire du bâtiment : ${TRADE_VOCABULARY}.`;
+
+const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
+
+function loadPersisted(key, fallback) {
+  return localforage.getItem(key).then((v) => (v === null || v === undefined ? fallback : v));
+}
+
+const EMPTY_INTERVENTION_DRAFT = () => ({ id: null, clientId: '', status: 'encours', description: '', photos: [], structuredReport: null });
+const EMPTY_CLIENT_DRAFT = () => ({ id: null, name: '', company: '', phone: '', email: '', address: '' });
+const EMPTY_ARTISAN = { logo: '', company: '', contact: '', job: '', phone: '', email: '', address: '' };
+
+// Données de démonstration reprises de la maquette (nouveau_design/Chantier App.dc.html),
+// chargées uniquement au tout premier lancement (rien n'écrase des données déjà saisies).
+const SEED_CLIENTS = [
+  { id: 'c1', name: 'Martin Dubois', company: 'Dubois Rénovation', phone: '06 12 34 56 78', email: 'martin.dubois@email.fr', address: '12 rue des Lilas, 69003 Lyon' },
+  { id: 'c2', name: 'Sophie Lefèvre', company: 'Cabinet Lefèvre', phone: '06 98 76 54 32', email: 's.lefevre@gmail.com', address: '45 avenue Foch, 69006 Lyon' },
+  { id: 'c3', name: 'Karim Haddad', company: '', phone: '07 45 12 89 33', email: 'karim.haddad@outlook.fr', address: '8 impasse des Vignes, 69008 Lyon' }
+];
+
+function seedIntervention(id, clientId, daysAgo, time, status, title, description, photoUrls) {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return {
+    id, clientId, date: d.toISOString(), time, status, title,
+    description, conclusion: '', structuredReport: null,
+    photos: photoUrls.map((url, i) => ({ id: id + '-p' + i, url }))
+  };
+}
+
+// Photos de démonstration (domaine public / Wikimedia Commons, libres de droits) illustrant
+// chaque type d'intervention — plomberie, électricité, peinture.
+const SEED_PHOTOS = {
+  plumbing: [
+    'https://upload.wikimedia.org/wikipedia/commons/c/c8/Plumber_soldering_pipe_above_new_water_heater.JPG',
+    'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b0/2025-04-10_19_35_17_Newly_installed_water_heater_in_a_house_in_the_Mountainview_section_of_Ewing_Township%2C_Mercer_County%2C_New_Jersey.jpg/500px-2025-04-10_19_35_17_Newly_installed_water_heater_in_a_house_in_the_Mountainview_section_of_Ewing_Township%2C_Mercer_County%2C_New_Jersey.jpg'
+  ],
+  electrical: [
+    'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Electrical_panel_and_subpanel_with_cover_removed_from_subpanel.jpg/500px-Electrical_panel_and_subpanel_with_cover_removed_from_subpanel.jpg'
+  ],
+  painting: [
+    'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c0/Paint_roller_4.jpg/500px-Paint_roller_4.jpg',
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/d/de/US_Navy_070823-N-9195K-025_Aerographer%27s_Mate_1st_Class_William_Palmer_uses_a_roller_to_add_a_second_coat_of_paint_to_a_wall_during_a_community_relations_project_at_Voza_Medical_Clinic_in_support_of_Pacific_Partnership.jpg/500px-thumbnail.jpg",
+    "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e9/US_Navy_090416-F-7522G-006_Aerographer%27s_Mate_Gina_Hegg%2C_embarked_aboard_the_Military_Sealift_Command_hospital_ship_USNS_Comfort_%28T-AH_20%29_paints_the_wall_of_a_pediatric_medical_facility_at_Emmanuel_Christian_School.jpg/500px-thumbnail.jpg"
+  ]
+};
+
+const SEED_INTERVENTIONS = [
+  seedIntervention('i1', 'c1', 0, '09:15', 'termine', 'Intervention plomberie', "Remplacement du groupe de sécurité et purge du ballon d'eau chaude. Vérification de la pression du circuit. RAS sur le reste de l'installation.", SEED_PHOTOS.plumbing),
+  seedIntervention('i2', 'c2', 0, '11:30', 'encours', 'Mise aux normes électriques', "Mise aux normes du tableau électrique — remplacement de 3 disjoncteurs et ajout d'un différentiel 30mA sur le circuit salle de bain.", SEED_PHOTOS.electrical),
+  seedIntervention('i3', 'c3', 1, '14:00', 'termine', 'Peinture salon', "Reprise d'enduit et peinture 2 couches dans le salon, 22m². Rebouchage des fissures avant application.", SEED_PHOTOS.painting)
+];
+
+const DEFAULT_ARTISAN = {
+  logo: '', company: 'Artis’Pro Bâtiment', contact: 'Julien Moreau',
+  job: 'Plombier - Électricien', phone: '06 70 11 22 33', email: 'contact@artispro-batiment.fr',
+  address: '3 rue de l’Industrie, 69100 Villeurbanne'
+};
+
+function App() {
+  const [tab, setTab] = useState('journal'); // journal | clients | profil | guide
+  const [clients, setClients] = useState([]);
+  const [interventions, setInterventions] = useState([]);
+  const [artisan, setArtisan] = useState(EMPTY_ARTISAN);
+  const [artisanSaved, setArtisanSaved] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
+
+  const [interventionModalOpen, setInterventionModalOpen] = useState(false);
+  const [draft, setDraft] = useState(EMPTY_INTERVENTION_DRAFT());
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+
+  const [clientModalOpen, setClientModalOpen] = useState(false);
+  const [clientDraft, setClientDraft] = useState(EMPTY_CLIENT_DRAFT());
+
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [pdfIntervId, setPdfIntervId] = useState(null);
+  const [pdfDraft, setPdfDraft] = useState({ title: '', conclusion: '' });
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+
+  const [toastMessage, setToastMessage] = useState('');
+  const toastTimerRef = useRef(null);
+
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isIos, setIsIos] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  const [notificationStatus, setNotificationStatus] = useState(
+    'Notification' in window ? Notification.permission : 'default'
+  );
+  const [showNotificationsPopover, setShowNotificationsPopover] = useState(false);
+  const notificationsPopoverRef = useRef(null);
+
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingStartTimeRef = useRef(0);
+  const photoMarkersRef = useRef([]);
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToastMessage(''), 2600);
+  };
+
+  // ---- Load persisted data on start (seed demo data once, on the very first launch) ----
+  useEffect(() => {
+    const SEED_VERSION = 2; // bump to re-seed everyone once (e.g. when seed photos change)
+    Promise.all([
+      loadPersisted('seedVersion', 0),
+      loadPersisted('clients', []),
+      loadPersisted('interventions', []),
+      loadPersisted('artisan', EMPTY_ARTISAN),
+    ]).then(([seedVersion, c, iv, a]) => {
+      if (seedVersion < SEED_VERSION) {
+        c = SEED_CLIENTS;
+        iv = SEED_INTERVENTIONS;
+        a = DEFAULT_ARTISAN;
+        localforage.setItem('seedVersion', SEED_VERSION);
+      }
+      setClients(c);
+      setInterventions(iv);
+      setArtisan(a);
+      setDataLoaded(true);
+    });
+
+    document.documentElement.setAttribute('data-theme', 'light');
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setInterventionModalOpen(false);
+        setClientModalOpen(false);
+        setPdfModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    const handleClickOutside = (e) => {
+      if (notificationsPopoverRef.current && !notificationsPopoverRef.current.contains(e.target)) {
+        setShowNotificationsPopover(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+
+    const checkDailyReminder = () => {
+      const now = new Date();
+      if (now.getHours() === 17 && now.getMinutes() === 30) {
+        showLocalNotification('Rappel ChantierExpress', {
+          body: "C'est l'heure du bilan ! Pensez à générer et envoyer votre rapport de travaux.",
+          icon: '/icon.svg',
+          tag: 'daily-reminder'
+        });
+      }
+    };
+    const reminderInterval = setInterval(checkDailyReminder, 60000);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleClickOutside);
+      clearInterval(reminderInterval);
+    };
+  }, []);
+
+  // ---- Persist on change (skip the initial load tick) ----
+  useEffect(() => { if (dataLoaded) localforage.setItem('clients', clients); }, [clients, dataLoaded]);
+  useEffect(() => { if (dataLoaded) localforage.setItem('interventions', interventions); }, [interventions, dataLoaded]);
+  useEffect(() => { if (dataLoaded) localforage.setItem('artisan', artisan); }, [artisan, dataLoaded]);
+
+  // ---- PWA install detection ----
+  useEffect(() => {
+    const standaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+    setIsStandalone(standaloneMode);
+    setIsIos(/iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase()));
+
+    const handleInstallPrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt);
+
+    loadPersisted('visits', 0).then((v) => {
+      const visits = v + 1;
+      localforage.setItem('visits', visits);
+      loadPersisted('installDismissed', false).then((dismissed) => {
+        if (visits >= 3 && !dismissed && !standaloneMode) setShowInstallBanner(true);
+      });
+    });
+
+    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
+  }, []);
+
+  const dismissInstall = () => {
+    localforage.setItem('installDismissed', true);
+    setShowInstallBanner(false);
+  };
+
+  const installApp = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      await deferredPrompt.userChoice;
+      setDeferredPrompt(null);
+      setShowInstallBanner(false);
+    } else {
+      showToast(isIos
+        ? "Utilise le bouton de partage de Safari → « Sur l'écran d'accueil »"
+        : "Utilise le menu de ton navigateur → « Installer l'application »");
+      setShowInstallBanner(false);
+    }
+  };
+
+  // ---- Notifications ----
+  const showLocalNotification = (title, options) => {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.ready.then((reg) => reg.showNotification(title, options)).catch(() => {
+        try { new Notification(title, options); } catch (e) { /* unsupported */ }
+      });
+    } else {
+      try { new Notification(title, options); } catch (e) { /* unsupported */ }
+    }
+  };
+
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      showToast('Notifications non supportées par ce navigateur.');
+      return;
+    }
+    const isSecure = window.location.protocol === 'https:' || window.location.hostname === 'localhost';
+    if (!isSecure) {
+      showToast('Les notifications nécessitent une connexion HTTPS.');
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationStatus(permission);
+    if (permission === 'granted') {
+      showLocalNotification('ChantierExpress', {
+        body: 'Rappels quotidiens activés ! Vous serez averti à 17h30.',
+        icon: '/icon.svg'
+      });
+    }
+  };
+
+  // ---- Navigation ----
+  const goTab = (t) => setTab(t);
+
+  // ---- Clients ----
+  const openNewClient = () => { setClientDraft(EMPTY_CLIENT_DRAFT()); setClientModalOpen(true); };
+  const openClientEdit = (id) => {
+    const c = clients.find((c) => c.id === id);
+    setClientDraft({ ...c });
+    setClientModalOpen(true);
+  };
+  const closeClientModal = () => setClientModalOpen(false);
+  const setClientField = (field, value) => setClientDraft((d) => ({ ...d, [field]: value }));
+
+  const saveClientDraft = () => {
+    if (!clientDraft.name.trim()) return;
+    if (clientDraft.id) {
+      setClients((prev) => prev.map((c) => (c.id === clientDraft.id ? { ...clientDraft } : c)));
+    } else {
+      const newClient = { ...clientDraft, id: 'c' + Date.now() };
+      setClients((prev) => [...prev, newClient]);
+      if (interventionModalOpen) setDraft((d) => ({ ...d, clientId: newClient.id }));
+    }
+    setClientModalOpen(false);
+    showToast('Client enregistré');
+  };
+
+  const deleteClientDraft = () => {
+    setClients((prev) => prev.filter((c) => c.id !== clientDraft.id));
+    setClientModalOpen(false);
+    showToast('Client supprimé');
+  };
+
+  // ---- Intervention modal ----
+  const resetPhotoMarkers = () => { photoMarkersRef.current = []; };
+
+  const openNewIntervention = () => {
+    setDraft(EMPTY_INTERVENTION_DRAFT());
+    resetPhotoMarkers();
+    setInterventionModalOpen(true);
+  };
+
+  const openQuickDictation = () => {
+    setDraft(EMPTY_INTERVENTION_DRAFT());
+    resetPhotoMarkers();
+    setInterventionModalOpen(true);
+    setTimeout(() => toggleDictation(), 250);
+  };
+
+  const openInterventionEdit = (id) => {
+    const it = interventions.find((i) => i.id === id);
+    setDraft({
+      id: it.id, clientId: it.clientId, status: it.status,
+      description: it.description, photos: it.photos || [],
+      structuredReport: it.structuredReport || null
+    });
+    resetPhotoMarkers();
+    setInterventionModalOpen(true);
+  };
+
+  const closeInterventionModal = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setInterventionModalOpen(false);
+    setIsRecording(false);
+  };
+
+  const setDraftField = (field, value) => setDraft((d) => ({ ...d, [field]: value }));
+
+  // ---- Dictation: MediaRecorder + Groq Whisper (batch, not live) so opening the
+  // camera to take a photo mid-sentence never interrupts the recording. Photos are
+  // timestamped and matched to the Whisper segment spoken at that moment. ----
+  const transcribeWithGroq = async (audioBlob) => {
+    if (!GROQ_API_KEY) throw new Error("Clé Groq manquante (VITE_GROQ_API_KEY dans .env).");
+    const form = new FormData();
+    form.append('file', audioBlob, 'dictee.webm');
+    form.append('model', 'whisper-large-v3-turbo');
+    form.append('language', 'fr');
+    form.append('prompt', GROQ_TRANSCRIPTION_PROMPT);
+    form.append('response_format', 'verbose_json');
+    form.append('timestamp_granularities[]', 'segment');
+
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
+      body: form
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => null);
+      throw new Error(err?.error?.message || 'Erreur du service de transcription Groq');
+    }
+    const data = await response.json();
+    return { text: data.text || '', segments: data.segments || [] };
+  };
+
+  const buildDescriptionFromSegments = (text, segments, markers) => {
+    if (!segments || segments.length === 0 || markers.length === 0) {
+      const trailing = markers.map((m) => `[Photo ${m.photoNumber}]`).join(' ');
+      return trailing ? `${text} ${trailing}`.trim() : text;
+    }
+    const remaining = [...markers].sort((a, b) => a.atMs - b.atMs);
+    let result = '';
+    segments.forEach((seg, idx) => {
+      result += seg.text.trim() + ' ';
+      const segEndMs = seg.end * 1000;
+      const isLast = idx === segments.length - 1;
+      while (remaining.length > 0 && (isLast || remaining[0].atMs <= segEndMs)) {
+        result += `[Photo ${remaining.shift().photoNumber}] `;
+      }
+    });
+    return result.trim();
+  };
+
+  const toggleDictation = async () => {
+    if (isRecording) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recordingStartTimeRef.current = Date.now();
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setIsTranscribing(true);
+        try {
+          const { text, segments } = await transcribeWithGroq(audioBlob);
+          const merged = buildDescriptionFromSegments(text, segments, photoMarkersRef.current);
+          photoMarkersRef.current = [];
+          setDraft((d) => ({ ...d, description: `${d.description}${d.description ? ' ' : ''}${merged}`.trim() }));
+        } catch (err) {
+          console.error(err);
+          showToast(`Erreur de transcription : ${err.message}`);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error(err);
+      showToast("Impossible d'accéder au microphone.");
+    }
+  };
+
+  // ---- Gemini: structure the dictated text into zones/tasks/photos ----
+  const optimizeText = async () => {
+    const raw = (draft.description || '').trim();
+    if (!raw) { showToast("Dicte ou saisis d'abord une description."); return; }
+    if (!GEMINI_API_KEY) { showToast('Clé Gemini manquante (VITE_GEMINI_API_KEY dans .env).'); return; }
+
+    setIsOptimizing(true);
+    try {
+      const responseSchema = {
+        type: 'OBJECT',
+        properties: {
+          zones: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                title: { type: 'STRING' },
+                tasks: {
+                  type: 'ARRAY',
+                  items: {
+                    type: 'OBJECT',
+                    properties: {
+                      text: { type: 'STRING' },
+                      photos: { type: 'ARRAY', items: { type: 'INTEGER' } }
+                    },
+                    required: ['text']
+                  }
+                }
+              },
+              required: ['title', 'tasks']
+            }
+          }
+        },
+        required: ['zones']
+      };
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [{
+                text: `Tu es un assistant qui aide des artisans du bâtiment à rédiger leur compte rendu de chantier.
+
+Le texte ci-dessous a été dicté à la voix par un artisan qui se déplace de pièce en pièce en racontant les travaux et en prenant des photos au fur et à mesure. Il contient parfois des repères "[Photo N]" insérés au moment exact où une photo a été prise.
+
+Tâche :
+1. Corrige les fautes de transcription, en particulier le jargon du bâtiment mal reconnu. Vocabulaire fréquent du métier : ${TRADE_VOCABULARY}.
+2. Regroupe les tâches par zone/pièce mentionnée (ex: "Salle de bain", "Cuisine", "Chambre 2"). Si aucune zone n'est identifiable, utilise une seule zone "Général".
+3. Puces courtes et factuelles, style compte rendu de chantier réel (ex: "Fermer les gaines du plombier", "Remplacer le groupe de sécurité"), jamais de phrases commerciales.
+4. Pour chaque tâche, si un ou plusieurs repères "[Photo N]" étaient à proximité dans le texte source, référence leur(s) numéro(s) N dans le champ "photos" (entiers). Ne laisse jamais "[Photo N]" dans le texte de la tâche.
+5. N'invente aucune information absente du texte source.
+
+Texte dicté :
+"${raw}"`
+              }]
+            }],
+            generationConfig: { responseMimeType: 'application/json', responseSchema }
+          })
+        }
+      );
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err?.error?.message || "Erreur du service d'optimisation");
+      }
+      const data = await response.json();
+      const parsed = JSON.parse(data.candidates[0].content.parts[0].text);
+      const zones = (parsed.zones || []).filter((z) => z.tasks && z.tasks.length > 0);
+      const flattened = zones.map((zone) => {
+        const header = zones.length > 1 || zone.title.toLowerCase() !== 'général' ? `${zone.title.toUpperCase()}\n` : '';
+        return header + zone.tasks.map((t) => `- ${t.text}`).join('\n');
+      }).join('\n\n');
+
+      setDraft((d) => ({ ...d, description: flattened, structuredReport: { zones } }));
+      showToast('Texte optimisé');
+    } catch (err) {
+      console.error(err);
+      showToast(`Erreur d'optimisation : ${err.message}`);
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
+  // ---- Photos ----
+  const onPhotosChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX = 800;
+          let { width, height } = img;
+          if (width > height) { if (width > MAX) { height *= MAX / width; width = MAX; } }
+          else { if (height > MAX) { width *= MAX / height; height = MAX; } }
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          const url = canvas.toDataURL('image/jpeg', 0.6);
+          const photoId = 'p' + Date.now() + Math.random();
+          setDraft((d) => {
+            const photos = [...d.photos, { id: photoId, url }];
+            const photoNumber = photos.length;
+            if (isRecording) {
+              photoMarkersRef.current.push({ photoNumber, atMs: Date.now() - recordingStartTimeRef.current });
+            }
+            return { ...d, photos };
+          });
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  };
+
+  const removePhoto = (photoId) => setDraft((d) => ({ ...d, photos: d.photos.filter((p) => p.id !== photoId) }));
+
+  // ---- Save / delete intervention ----
+  const saveIntervention = () => {
+    if (!draft.clientId || !draft.description.trim()) return;
+    const now = new Date();
+    if (draft.id) {
+      setInterventions((prev) => prev.map((it) => (
+        it.id === draft.id
+          ? { ...it, clientId: draft.clientId, status: draft.status, description: draft.description, photos: draft.photos, structuredReport: draft.structuredReport }
+          : it
+      )));
+    } else {
+      setInterventions((prev) => [{
+        id: 'i' + Date.now(), clientId: draft.clientId, date: now.toISOString(),
+        time: now.toTimeString().slice(0, 5), status: draft.status, title: 'Intervention',
+        description: draft.description, conclusion: '', photos: draft.photos, structuredReport: draft.structuredReport
+      }, ...prev]);
+    }
+    setInterventionModalOpen(false);
+    setIsRecording(false);
+    showToast('Fiche enregistrée');
+  };
+
+  const deleteIntervention = (id) => {
+    if (!confirm('Supprimer cette fiche ?')) return;
+    setInterventions((prev) => prev.filter((i) => i.id !== id));
+    showToast('Fiche supprimée');
+  };
+
+  // ---- Artisan profile ----
+  const setArtisanField = (field, value) => { setArtisan((a) => ({ ...a, [field]: value })); setArtisanSaved(false); };
+
+  const onLogoChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_W = 300, MAX_H = 150;
+        let { width, height } = img;
+        if (width > height) { if (width > MAX_W) { height *= MAX_W / width; width = MAX_W; } }
+        else { if (height > MAX_H) { width *= MAX_H / height; height = MAX_H; } }
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        setArtisan((a) => ({ ...a, logo: canvas.toDataURL('image/jpeg', 0.8) }));
+        setArtisanSaved(false);
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const saveArtisan = () => {
+    setArtisanSaved(true);
+    showToast('Profil enregistré');
+    setTimeout(() => setArtisanSaved(false), 2000);
+  };
+
+  // ---- PDF ----
+  const openPdfModal = (id) => {
+    const it = interventions.find((i) => i.id === id);
+    setPdfIntervId(id);
+    setPdfDraft({ title: it.title || "Rapport d'intervention", conclusion: it.conclusion || '' });
+    setPdfModalOpen(true);
+  };
+  const closePdfModal = () => setPdfModalOpen(false);
+
+  const generatePdf = async () => {
+    const it = interventions.find((i) => i.id === pdfIntervId);
+    if (!it) return;
+    const client = clients.find((c) => c.id === it.clientId);
+    const { title, conclusion } = pdfDraft;
+
+    setInterventions((prev) => prev.map((i) => (i.id === it.id ? { ...i, title, conclusion } : i)));
+
+    setPdfGenerating(true);
+    try {
+      const { jsPDF } = await import('jspdf');
+      const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+      const pageW = doc.internal.pageSize.getWidth();
+      let y = 48;
+
+      if (artisan.logo) {
+        try { doc.addImage(artisan.logo, 'JPEG', 40, y, 48, 48); } catch (e) { /* skip */ }
+      }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+      doc.text(artisan.company || '', 100, y + 16);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      doc.text([artisan.contact, artisan.job, artisan.phone, artisan.email].filter(Boolean).join(' · '), 100, y + 30);
+      doc.text(artisan.address || '', 100, y + 42);
+      y += 70;
+      doc.setDrawColor(180); doc.line(40, y, pageW - 40, y); y += 26;
+
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+      doc.text(title || "Rapport d'intervention", 40, y); y += 26;
+
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+      const dateStr = new Date(it.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+      doc.text(`Client : ${client ? client.name : ''}${client && client.company ? ' — ' + client.company : ''}`, 40, y); y += 16;
+      doc.text(`Date : ${dateStr} à ${it.time}   ·   Statut : ${it.status === 'termine' ? 'Terminé' : 'En cours'}`, 40, y); y += 24;
+
+      const zones = it.structuredReport?.zones?.filter((z) => z.tasks && z.tasks.length > 0);
+      if (zones && zones.length > 0) {
+        zones.forEach((zone) => {
+          if (y > 700) { doc.addPage(); y = 48; }
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+          doc.setTextColor(38, 49, 79);
+          doc.text(zone.title.toUpperCase(), 40, y); y += 16;
+          doc.setTextColor(0, 0, 0);
+
+          zone.tasks.forEach((task) => {
+            if (y > 720) { doc.addPage(); y = 48; }
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+            const lines = doc.splitTextToSize(`- ${task.text}`, pageW - 84);
+            doc.text(lines, 44, y); y += lines.length * 13 + 4;
+
+            const taskPhotos = (task.photos || []).map((n) => it.photos && it.photos[n - 1]).filter((p) => p && p.url);
+            if (taskPhotos.length > 0) {
+              let x = 44;
+              taskPhotos.forEach((p) => {
+                if (y + 90 > 780) { doc.addPage(); y = 48; x = 44; }
+                try { doc.addImage(p.url, 'JPEG', x, y, 80, 80); } catch (e) { /* skip */ }
+                x += 88;
+              });
+              y += 92;
+            }
+            y += 4;
+          });
+          y += 10;
+        });
+      } else {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+        doc.text('Description des travaux', 40, y); y += 16;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+        const cleanDescription = (it.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+        const lines = doc.splitTextToSize(cleanDescription, pageW - 80);
+        doc.text(lines, 40, y); y += lines.length * 13 + 16;
+
+        const realPhotos = (it.photos || []).filter((p) => p.url);
+        if (realPhotos.length) {
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+          if (y > 650) { doc.addPage(); y = 48; }
+          doc.text('Photos', 40, y); y += 14;
+          let x = 40;
+          realPhotos.forEach((p) => {
+            if (x + 150 > pageW - 40) { x = 40; y += 150; }
+            if (y + 150 > 780) { doc.addPage(); y = 48; x = 40; }
+            try { doc.addImage(p.url, 'JPEG', x, y, 140, 140); } catch (e) { /* skip */ }
+            x += 150;
+          });
+        }
+      }
+
+      if (conclusion && conclusion.trim()) {
+        if (y > 700) { doc.addPage(); y = 48; }
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+        doc.text('Conclusion', 40, y); y += 16;
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+        const clines = doc.splitTextToSize(conclusion, pageW - 80);
+        doc.text(clines, 40, y); y += clines.length * 13 + 16;
+      }
+
+      const fname = `rapport-${(client ? client.name : 'client').replace(/\s+/g, '-').toLowerCase()}-${it.date.slice(0, 10)}.pdf`;
+      doc.save(fname);
+      showToast('PDF généré');
+      setPdfModalOpen(false);
+    } finally {
+      setPdfGenerating(false);
+    }
+  };
+
+  // ---- Share ----
+  const buildShareText = (it) => {
+    const client = clients.find((c) => c.id === it.clientId);
+    const dateStr = new Date(it.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const cleanDescription = (it.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+    return `Rapport d'intervention — ${client ? client.name : ''}\n${dateStr} à ${it.time} (${it.status === 'termine' ? 'Terminé' : 'En cours'})\n\n${cleanDescription}`;
+  };
+
+  const shareWhatsapp = async (id) => {
+    const it = interventions.find((i) => i.id === id);
+    const text = buildShareText(it);
+    const photos = (it.photos || []).filter((p) => p.url);
+
+    if (photos.length > 0) {
+      try {
+        const files = await Promise.all(photos.map(async (p, i) => {
+          const res = await fetch(p.url);
+          const blob = await res.blob();
+          return new File([blob], `chantier-${i + 1}.jpg`, { type: blob.type || 'image/jpeg' });
+        }));
+        if (navigator.canShare && navigator.canShare({ files })) {
+          await navigator.share({ text, files });
+          return;
+        }
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        console.error('Native share with photos failed, falling back to text-only', err);
+      }
+    }
+    if (navigator.share) {
+      try { await navigator.share({ title: "Rapport d'intervention", text }); return; }
+      catch (e) { /* fall through to wa.me link */ }
+    }
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  };
+
+  // ---- Derived render data ----
+  const TAB_TITLES = { journal: 'Journal de chantier', clients: 'Annuaire Clients', profil: 'Profil Artisan', guide: 'Guide & Aide' };
+  const artisanInitial = (artisan.company || artisan.contact || 'C').trim().charAt(0).toUpperCase();
+  const pendingInterventions = interventions.filter((i) => i.status === 'encours');
+
+  const sortedInterventions = [...interventions].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const dateLabelFor = (dateIso) => {
+    const d = new Date(dateIso);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) return "Aujourd'hui";
+    const yest = new Date(today); yest.setDate(yest.getDate() - 1);
+    if (d.toDateString() === yest.toDateString()) return 'Hier';
+    return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+  };
+
+  return (
+    <div className="phone-shell">
+      {/* ═══════════════ HEADER ═══════════════ */}
+      <header className="app-header">
+        {artisan.logo ? (
+          <img src={artisan.logo} alt="Logo" className="header-avatar" />
+        ) : (
+          <div className="header-avatar header-avatar-fallback">{artisanInitial}</div>
+        )}
+        <div className="header-titles">
+          <div className="header-title">{TAB_TITLES[tab]}</div>
+          <div className="header-subtitle">{artisan.company || artisan.contact || ''}</div>
+        </div>
+        <div style={{ position: 'relative' }} ref={notificationsPopoverRef}>
+          <button
+            className={`icon-btn ${showNotificationsPopover ? 'active' : ''}`}
+            onClick={() => setShowNotificationsPopover((v) => !v)}
+            title="Notifications"
+            style={{ position: 'relative' }}
+          >
+            <Bell size={18} />
+            {pendingInterventions.length > 0 && <span className="notification-badge">{pendingInterventions.length}</span>}
+          </button>
+          {showNotificationsPopover && (
+            <div className="notification-popover">
+              <div className="notification-popover-header">
+                <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>Notifications</span>
+                <button className="text-link-btn" onClick={() => setShowNotificationsPopover(false)}>Fermer</button>
+              </div>
+              {notificationStatus !== 'granted' && (
+                <div style={{ padding: 10, background: 'var(--color-accent-100)', borderRadius: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Activer les rappels quotidiens de 17h30 ?</span>
+                  <button className="btn btn-primary" style={{ padding: '6px 10px', fontSize: '0.75rem' }} onClick={requestNotificationPermission}>Activer</button>
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 200, overflowY: 'auto' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--color-neutral-700)' }}>Chantiers à finaliser :</span>
+                {pendingInterventions.length === 0 ? (
+                  <div style={{ padding: 8, textAlign: 'center', fontSize: '0.78rem', color: 'var(--color-neutral-600)' }}>Tous les chantiers sont terminés !</div>
+                ) : pendingInterventions.map((item) => {
+                  const client = clients.find((c) => c.id === item.clientId);
+                  return (
+                    <div key={item.id} className="notification-item" style={{ cursor: 'pointer' }} onClick={() => { openInterventionEdit(item.id); setShowNotificationsPopover(false); }}>
+                      <span className="notification-item-title">{client ? client.name : 'Client inconnu'}</span>
+                      <span className="notification-item-desc">Dicté à {item.time} — cliquez pour compléter.</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </header>
+
+      {!GEMINI_API_KEY && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', background: 'rgba(239,68,68,0.08)', fontSize: '0.75rem', color: 'var(--color-error)' }}>
+          <AlertTriangle size={14} /> Clé Gemini manquante dans .env
+        </div>
+      )}
+      {!GROQ_API_KEY && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', background: 'rgba(239,68,68,0.08)', fontSize: '0.75rem', color: 'var(--color-error)' }}>
+          <AlertTriangle size={14} /> Clé Groq manquante dans .env
+        </div>
+      )}
+
+      {/* ═══════════════ INSTALL BANNER ═══════════════ */}
+      {showInstallBanner && !isStandalone && (
+        <div className="install-banner">
+          <Download size={20} />
+          <div className="install-banner-text">Installe l'app sur ton écran d'accueil pour l'utiliser hors-ligne, même sans réseau chantier.</div>
+          <button className="install-banner-btn" onClick={installApp}>Installer</button>
+          <button className="install-banner-close" onClick={dismissInstall} aria-label="Fermer"><X size={16} /></button>
+        </div>
+      )}
+
+      {/* ═══════════════ MAIN CONTENT ═══════════════ */}
+      <main className="app-main">
+        {/* ---------- TAB: JOURNAL ---------- */}
+        {tab === 'journal' && (
+          <div>
+            <div className="stat-grid">
+              <div className="stat-card">
+                <div className="stat-value">{interventions.length}</div>
+                <div className="stat-label">Interventions</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value" style={{ color: 'var(--color-accent-700)' }}>{interventions.filter((i) => i.status === 'termine').length}</div>
+                <div className="stat-label">Terminées</div>
+              </div>
+            </div>
+
+            <button className="btn btn-primary btn-block" onClick={openNewIntervention} style={{ minHeight: 52, fontSize: 14, marginBottom: 22 }}>
+              <Plus size={18} strokeWidth={2.4} /> Nouvelle Fiche
+            </button>
+
+            {sortedInterventions.length > 0 ? (
+              <div className="intervention-list">
+                {sortedInterventions.map((it) => {
+                  const client = clients.find((c) => c.id === it.clientId);
+                  return (
+                    <div key={it.id} className="intervention-card">
+                      <div className="intervention-card-body">
+                        <div className="intervention-card-head">
+                          <div>
+                            <div className="intervention-card-client">{client ? client.name : 'Client supprimé'}</div>
+                            <div className="intervention-card-date">{dateLabelFor(it.date)} · {it.time}</div>
+                          </div>
+                          <span className={`tag ${it.status === 'termine' ? 'tag-accent' : 'tag-neutral'}`}>
+                            {it.status === 'termine' ? 'Terminé' : 'En cours'}
+                          </span>
+                        </div>
+                        <p className="intervention-card-desc">{(it.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim()}</p>
+                      </div>
+
+                      {(it.photos || []).length > 0 && (
+                        <div className="intervention-card-photos">
+                          {it.photos.map((p) => (
+                            p.url
+                              ? <img key={p.id} src={p.url} alt="Chantier" className="intervention-card-photo" />
+                              : <div key={p.id} className="intervention-card-photo photo-placeholder"><Camera size={18} /></div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="intervention-card-footer">
+                        <button className="intervention-card-action" onClick={() => openPdfModal(it.id)}>
+                          <FileText size={17} /><span>PDF</span>
+                        </button>
+                        <button className="intervention-card-action whatsapp" onClick={() => shareWhatsapp(it.id)}>
+                          <MessageCircle size={17} /><span>WhatsApp</span>
+                        </button>
+                        <button className="intervention-card-action" onClick={() => openInterventionEdit(it.id)}>
+                          <Edit2 size={16} /><span>Modifier</span>
+                        </button>
+                        <button className="intervention-card-action danger" onClick={() => deleteIntervention(it.id)}>
+                          <Trash2 size={16} /><span>Supprimer</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <h4>Aucune fiche pour l'instant</h4>
+                <p className="empty-state-sub">Crée ta première fiche d'intervention en 4 étapes.</p>
+                <div className="empty-state-steps">
+                  {[
+                    ['1', 'Choisir un client', "Sélectionne une fiche dans l'annuaire, ou crée-la à la volée."],
+                    ['2', "Dicter l'intervention", 'Appuie sur le micro et décris les travaux à voix haute.'],
+                    ['3', 'Optimiser le texte', 'Notre outil structure ta description en tâches claires.'],
+                    ['4', 'Générer le PDF', 'Exporte ou partage le rapport en un geste.'],
+                  ].map(([num, title, desc]) => (
+                    <div className="empty-state-step" key={num}>
+                      <div className="empty-state-step-num">{num}</div>
+                      <div>
+                        <div className="empty-state-step-title">{title}</div>
+                        <div className="empty-state-step-desc">{desc}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ---------- TAB: CLIENTS ---------- */}
+        {tab === 'clients' && (
+          <div>
+            <button className="btn btn-primary btn-block" onClick={openNewClient} style={{ minHeight: 52, fontSize: 14, marginBottom: 20 }}>
+              <Plus size={18} strokeWidth={2.4} /> Nouveau Client
+            </button>
+            <div className="client-list">
+              {clients.map((c) => (
+                <button key={c.id} className="client-row" onClick={() => openClientEdit(c.id)}>
+                  <div className="client-row-avatar">{(c.name || '?').trim().charAt(0).toUpperCase()}</div>
+                  <div className="client-row-info">
+                    <div className="client-row-name">{c.name}</div>
+                    <div className="client-row-subline">{[c.company, c.phone].filter(Boolean).join(' · ') || 'Aucun détail'}</div>
+                  </div>
+                  <ChevronRight size={16} className="client-row-chevron" />
+                </button>
+              ))}
+            </div>
+            {clients.length === 0 && <p style={{ textAlign: 'center', opacity: 0.6, fontSize: 13, padding: '30px 0' }}>Aucun client enregistré.</p>}
+          </div>
+        )}
+
+        {/* ---------- TAB: PROFIL ---------- */}
+        {tab === 'profil' && (
+          <div>
+            <div className="profil-header">
+              <label style={{ cursor: 'pointer', flexShrink: 0 }}>
+                {artisan.logo ? (
+                  <img src={artisan.logo} alt="Logo" className="profil-avatar" />
+                ) : (
+                  <div className="profil-avatar profil-avatar-fallback"><Camera size={22} /></div>
+                )}
+                <input type="file" accept="image/*" onChange={onLogoChange} style={{ display: 'none' }} />
+              </label>
+              <div>
+                <div style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 14 }}>Logo entreprise</div>
+                <div style={{ fontSize: 12, opacity: 0.6 }}>Apparaît en en-tête de chaque PDF</div>
+              </div>
+            </div>
+
+            <div className="profil-fields">
+              <div className="field"><label>Nom entreprise</label><input className="input" value={artisan.company} onChange={(e) => setArtisanField('company', e.target.value)} /></div>
+              <div className="field"><label>Nom du contact</label><input className="input" value={artisan.contact} onChange={(e) => setArtisanField('contact', e.target.value)} /></div>
+              <div className="field"><label>Métier / spécialité</label><input className="input" value={artisan.job} onChange={(e) => setArtisanField('job', e.target.value)} /></div>
+              <div className="field"><label>Téléphone</label><input className="input" value={artisan.phone} onChange={(e) => setArtisanField('phone', e.target.value)} /></div>
+              <div className="field"><label>Email</label><input className="input" value={artisan.email} onChange={(e) => setArtisanField('email', e.target.value)} /></div>
+              <div className="field"><label>Adresse professionnelle</label><textarea className="input" style={{ minHeight: 64 }} value={artisan.address} onChange={(e) => setArtisanField('address', e.target.value)} /></div>
+            </div>
+            <button className="btn btn-primary btn-block" onClick={saveArtisan} style={{ minHeight: 50, marginTop: 20 }}>
+              {artisanSaved ? 'Enregistré ✓' : 'Enregistrer le profil'}
+            </button>
+          </div>
+        )}
+
+        {/* ---------- TAB: GUIDE ---------- */}
+        {tab === 'guide' && (
+          <div className="guide-list">
+            <div className="guide-row">
+              <div className="guide-row-head"><Mic size={22} color="var(--color-accent)" /><h4>Dictée vocale</h4></div>
+              <p>Appuie sur le micro central pour démarrer l'enregistrement, décris tes travaux en te déplaçant de pièce en pièce, puis appuie à nouveau pour arrêter : la transcription apparaît une fois l'enregistrement terminé.</p>
+            </div>
+            <div className="guide-row">
+              <div className="guide-row-head"><Sparkles size={22} color="var(--color-accent)" /><h4>Optimisation automatique</h4></div>
+              <p>Le bouton "Optimiser" reformule ta description dictée en tâches claires, groupées par pièce, prêtes à être lues par le client.</p>
+            </div>
+            <div className="guide-row">
+              <div className="guide-row-head"><FileText size={22} color="var(--color-accent)" /><h4>PDF & partage</h4></div>
+              <p>Relis et édite le rapport, génère un PDF avec logo et photos, puis partage-le par WhatsApp ou par email en un geste — tout fonctionne hors-ligne.</p>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* ═══════════════ BOTTOM NAV ═══════════════ */}
+      <nav className="bottom-nav">
+        <button className={`nav-btn ${tab === 'journal' ? 'active' : ''}`} onClick={() => goTab('journal')}>
+          <Home size={21} /><span>Journal</span>
+        </button>
+        <button className={`nav-btn ${tab === 'clients' ? 'active' : ''}`} onClick={() => goTab('clients')}>
+          <Users size={21} /><span>Clients</span>
+        </button>
+        <button className={`nav-mic-btn ${isRecording ? 'recording' : ''}`} onClick={openQuickDictation} aria-label="Dicter une nouvelle intervention">
+          {isRecording ? <MicOff size={24} /> : <Mic size={24} />}
+        </button>
+        <button className={`nav-btn ${tab === 'profil' ? 'active' : ''}`} onClick={() => goTab('profil')}>
+          <User size={21} /><span>Profil</span>
+        </button>
+        <button className={`nav-btn ${tab === 'guide' ? 'active' : ''}`} onClick={() => goTab('guide')}>
+          <BookOpen size={21} /><span>Guide</span>
+        </button>
+      </nav>
+
+      {/* ═══════════════ MODAL: NEW/EDIT INTERVENTION ═══════════════ */}
+      {interventionModalOpen && (
+        <div className="dialog-backdrop">
+          <div className="dialog">
+            <div className="dialog-head">
+              <div className="dialog-title">{draft.id ? 'Modifier la fiche' : "Nouvelle fiche d'intervention"}</div>
+              <button className="dialog-close" onClick={closeInterventionModal}><X size={20} /></button>
+            </div>
+
+            <div className="field">
+              <label>Client</label>
+              <select className="input" value={draft.clientId} onChange={(e) => setDraftField('clientId', e.target.value)}>
+                <option value="">Sélectionner un client…</option>
+                {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+
+            <div className="field">
+              <label>Statut</label>
+              <div className="seg">
+                <label className={`seg-opt ${draft.status === 'encours' ? 'active' : ''}`}>
+                  <input type="radio" name="status" checked={draft.status === 'encours'} onChange={() => setDraftField('status', 'encours')} />En cours
+                </label>
+                <label className={`seg-opt ${draft.status === 'termine' ? 'active' : ''}`}>
+                  <input type="radio" name="status" checked={draft.status === 'termine'} onChange={() => setDraftField('status', 'termine')} />Terminé
+                </label>
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Description de l'intervention</label>
+              <textarea
+                className="input" style={{ minHeight: 130 }}
+                placeholder="Décris les travaux réalisés…"
+                value={draft.description}
+                onChange={(e) => setDraftField('description', e.target.value)}
+              />
+              {(isRecording || isTranscribing) && (
+                <div className="recording-indicator">
+                  <span className="recording-dot"></span>
+                  {isRecording ? "Enregistrement en cours — tu peux prendre des photos sans l'interrompre" : 'Transcription en cours…'}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                <button className="btn btn-secondary" style={{ flex: 1, minHeight: 48 }} onClick={toggleDictation} disabled={isTranscribing}>
+                  {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
+                  &nbsp;{isTranscribing ? 'Transcription…' : isRecording ? 'Arrêter' : 'Dicter'}
+                </button>
+                <button className="btn btn-ai" style={{ flex: 1, minHeight: 48 }} onClick={optimizeText} disabled={isOptimizing || !draft.description.trim()}>
+                  <Sparkles size={16} />&nbsp;{isOptimizing ? 'Optimisation…' : 'Optimiser'}
+                </button>
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Photos de chantier</label>
+              <div className="photo-grid">
+                {draft.photos.map((p) => (
+                  <div key={p.id} className="photo-thumb">
+                    {p.url
+                      ? <img src={p.url} alt="Preview" />
+                      : <div className="photo-thumb photo-placeholder" style={{ width: 64, height: 64 }}><Camera size={20} /></div>}
+                    <button className="photo-thumb-remove" onClick={() => removePhoto(p.id)}><X size={11} /></button>
+                  </div>
+                ))}
+                <label className="photo-add-btn" title="Prendre ou importer des photos">
+                  <Camera size={20} />
+                  <input type="file" accept="image/*" multiple onChange={onPhotosChange} style={{ display: 'none' }} />
+                </label>
+              </div>
+            </div>
+
+            <div className="dialog-actions">
+              <button className="btn btn-primary btn-block" onClick={saveIntervention} disabled={!draft.clientId || !draft.description.trim()} style={{ minHeight: 52 }}>
+                Enregistrer la fiche
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════ MODAL: CLIENT ═══════════════ */}
+      {clientModalOpen && (
+        <div className="dialog-backdrop centered">
+          <div className="dialog">
+            <div className="dialog-head">
+              <div className="dialog-title">{clientDraft.id ? 'Modifier le client' : 'Nouveau client'}</div>
+              <button className="dialog-close" onClick={closeClientModal}><X size={20} /></button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="field"><label>Nom</label><input className="input" value={clientDraft.name} onChange={(e) => setClientField('name', e.target.value)} /></div>
+              <div className="field"><label>Société (optionnel)</label><input className="input" value={clientDraft.company} onChange={(e) => setClientField('company', e.target.value)} /></div>
+              <div className="field"><label>Téléphone</label><input className="input" value={clientDraft.phone} onChange={(e) => setClientField('phone', e.target.value)} /></div>
+              <div className="field"><label>Email</label><input className="input" value={clientDraft.email} onChange={(e) => setClientField('email', e.target.value)} /></div>
+              <div className="field"><label>Adresse</label><textarea className="input" style={{ minHeight: 60 }} value={clientDraft.address} onChange={(e) => setClientField('address', e.target.value)} /></div>
+            </div>
+            <div className="dialog-actions" style={{ justifyContent: 'space-between' }}>
+              {clientDraft.id ? (
+                <button className="text-link-btn danger" onClick={deleteClientDraft}>Supprimer</button>
+              ) : <span />}
+              <button className="btn btn-primary" onClick={saveClientDraft} disabled={!clientDraft.name.trim()} style={{ minHeight: 44 }}>
+                <Check size={16} /> Enregistrer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════ MODAL: PDF PREVIEW / EXPORT ═══════════════ */}
+      {pdfModalOpen && pdfIntervId && (() => {
+        const it = interventions.find((i) => i.id === pdfIntervId);
+        const client = it ? clients.find((c) => c.id === it.clientId) : null;
+        return (
+          <div className="dialog-backdrop">
+            <div className="dialog">
+              <div className="dialog-head">
+                <div className="dialog-title">Aperçu du rapport</div>
+                <button className="dialog-close" onClick={closePdfModal}><X size={20} /></button>
+              </div>
+              <div className="field"><label>Titre du rapport</label><input className="input" value={pdfDraft.title} onChange={(e) => setPdfDraft((d) => ({ ...d, title: e.target.value }))} /></div>
+              <div className="pdf-preview-box">
+                <div className="pdf-preview-client">{client ? client.name : ''}</div>
+                <div className="pdf-preview-meta">
+                  {it && new Date(it.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })} · {it && (it.status === 'termine' ? 'Terminé' : 'En cours')}
+                </div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{it && it.description.replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim()}</div>
+              </div>
+              <div className="field"><label>Conclusion</label><textarea className="input" style={{ minHeight: 70 }} placeholder="Recommandations, points de vigilance…" value={pdfDraft.conclusion} onChange={(e) => setPdfDraft((d) => ({ ...d, conclusion: e.target.value }))} /></div>
+              <div className="dialog-actions" style={{ flexDirection: 'column' }}>
+                <button className="btn btn-primary btn-block" onClick={generatePdf} disabled={pdfGenerating} style={{ minHeight: 52 }}>
+                  {pdfGenerating ? 'Génération…' : 'Générer le PDF'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ═══════════════ TOAST ═══════════════ */}
+      {toastMessage && <div className="toast">{toastMessage}</div>}
+    </div>
+  );
+}
+
+export default App;

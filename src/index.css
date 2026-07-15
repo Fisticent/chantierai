@@ -871,6 +871,22 @@ button, input, textarea, select {
   flex: none;
 }
 
+.waveform {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  flex: none;
+}
+
+.waveform-bar {
+  width: 3px;
+  min-height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-error);
+  transition: height 0.08s ease-out;
+}
+
 /* ═══════════════ PDF preview box ═══════════════ */
 .pdf-preview-box {
   border: 1px solid var(--color-divider);

@@ -80,14 +80,32 @@ const SEED_INTERVENTIONS = [
   seedIntervention('i3', 'c3', 1, '14:00', 'termine', 'Peinture salon', "Reprise d'enduit et peinture 2 couches dans le salon, 22m². Rebouchage des fissures avant application.", SEED_PHOTOS.painting)
 ];
 
-// Simple monogram logo (SVG data URI, no external file needed) used as a placeholder for the
-// demo artisan profile — replaced instantly once the user uploads their own logo.
-const PLACEHOLDER_LOGO = 'data:image/svg+xml,' + encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-    <rect width="200" height="200" rx="36" fill="#26314f"/>
-    <text x="100" y="128" font-family="Outfit, system-ui, sans-serif" font-weight="800" font-size="86" fill="#faf8f5" text-anchor="middle">AP</text>
-  </svg>`
-);
+// Simple monogram logo, rendered to a raster PNG via canvas (no external file needed) and
+// used as a placeholder for the demo artisan profile. Rendered as a PNG rather than SVG
+// because jsPDF's addImage() cannot rasterize an SVG-sourced <img> element — it expects
+// already-decoded bitmap data, so an SVG source silently fails to embed in the PDF.
+function makePlaceholderLogo() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 200; canvas.height = 200;
+  const ctx = canvas.getContext('2d');
+  const r = 36;
+  ctx.fillStyle = '#26314f';
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.arcTo(200, 0, 200, 200, r);
+  ctx.arcTo(200, 200, 0, 200, r);
+  ctx.arcTo(0, 200, 0, 0, r);
+  ctx.arcTo(0, 0, 200, 0, r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#faf8f5';
+  ctx.font = "800 86px Outfit, system-ui, sans-serif";
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('AP', 100, 110);
+  return canvas.toDataURL('image/png');
+}
+const PLACEHOLDER_LOGO = typeof document !== 'undefined' ? makePlaceholderLogo() : '';
 
 const DEFAULT_ARTISAN = {
   logo: PLACEHOLDER_LOGO, company: 'Artis’Pro Bâtiment', contact: 'Julien Moreau',
@@ -136,6 +154,12 @@ function App() {
   const recordingStartTimeRef = useRef(0);
   const photoMarkersRef = useRef([]);
 
+  // Live waveform while recording — an AnalyserNode tapped off the same mic stream
+  // MediaRecorder uses (read-only tap, never connected to the speakers).
+  const [waveLevels, setWaveLevels] = useState([0, 0, 0, 0, 0]);
+  const audioContextRef = useRef(null);
+  const waveRafRef = useRef(null);
+
   const showToast = (msg) => {
     setToastMessage(msg);
     clearTimeout(toastTimerRef.current);
@@ -144,7 +168,7 @@ function App() {
 
   // ---- Load persisted data on start (seed demo data once, on the very first launch) ----
   useEffect(() => {
-    const SEED_VERSION = 3; // bump to re-seed everyone once (e.g. when seed photos/logo change)
+    const SEED_VERSION = 4; // bump to re-seed everyone once (e.g. when seed photos/logo change)
     Promise.all([
       loadPersisted('seedVersion', 0),
       loadPersisted('clients', []),
@@ -391,11 +415,51 @@ function App() {
     return result.trim();
   };
 
+  const stopWaveform = () => {
+    if (waveRafRef.current) cancelAnimationFrame(waveRafRef.current);
+    waveRafRef.current = null;
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    setWaveLevels([0, 0, 0, 0, 0]);
+  };
+
+  // Taps the same mic stream MediaRecorder is using (read-only, never routed to the
+  // speakers) to animate a live waveform while the artisan talks.
+  const startWaveform = (stream) => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const audioCtx = new AudioContextClass();
+    const source = audioCtx.createMediaStreamSource(stream);
+    const analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 64;
+    analyser.smoothingTimeConstant = 0.6;
+    source.connect(analyser);
+    audioContextRef.current = audioCtx;
+
+    const BAR_COUNT = 5;
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const step = Math.max(1, Math.floor(data.length / BAR_COUNT));
+    const tick = () => {
+      analyser.getByteFrequencyData(data);
+      const levels = Array.from({ length: BAR_COUNT }, (_, i) => {
+        const slice = data.slice(i * step, i * step + step);
+        const avg = slice.reduce((a, b) => a + b, 0) / (slice.length || 1);
+        return Math.min(1, avg / 150);
+      });
+      setWaveLevels(levels);
+      waveRafRef.current = requestAnimationFrame(tick);
+    };
+    tick();
+  };
+
   const toggleDictation = async () => {
     if (isRecording) {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
+      stopWaveform();
       setIsRecording(false);
       return;
     }
@@ -407,6 +471,7 @@ function App() {
       recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+        stopWaveform();
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         setIsTranscribing(true);
         try {
@@ -423,6 +488,7 @@ function App() {
       };
       mediaRecorderRef.current = recorder;
       recorder.start();
+      startWaveform(stream);
       setIsRecording(true);
     } catch (err) {
       console.error(err);
@@ -618,6 +684,45 @@ Texte dicté :
   };
   const closePdfModal = () => setPdfModalOpen(false);
 
+  // Loads an <img> element for a photo (data URI or remote URL) so jsPDF can read its real
+  // width/height — needed to place it without stretching, and to embed remote demo photos
+  // (jsPDF can't fetch a URL itself, only accepts already-loaded image data).
+  const loadImageEl = (src) => new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+
+  const detectImageFormat = (src) => {
+    if (src.startsWith('data:image/png')) return 'PNG';
+    if (src.startsWith('data:image/webp')) return 'WEBP';
+    return 'JPEG';
+  };
+
+  // "Contain" fit: scales the image to fill as much of the maxW×maxH box as possible
+  // without cropping or distorting its aspect ratio.
+  const fitBox = (img, maxW, maxH) => {
+    const ratio = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
+    return { w: img.naturalWidth * ratio, h: img.naturalHeight * ratio };
+  };
+
+  // Brand palette for the PDF, matching the app's design tokens (RGB triplets for jsPDF).
+  const PDF_COLOR = {
+    navy: [38, 49, 79],
+    cream: [250, 248, 245],
+    card: [247, 245, 241],
+    divider: [225, 220, 210],
+    text: [28, 27, 25],
+    muted: [107, 99, 82],
+    success: [37, 169, 90],
+    successBg: [222, 243, 231],
+    warning: [180, 83, 9],
+    warningBg: [253, 237, 214],
+    shadow: [222, 217, 207],
+  };
+
   const generatePdf = async () => {
     const it = interventions.find((i) => i.id === pdfIntervId);
     if (!it) return;
@@ -629,88 +734,205 @@ Texte dicté :
     setPdfGenerating(true);
     try {
       const { jsPDF } = await import('jspdf');
+
+      // Preload every image used in the PDF up front (logo + all photos), so drawing below
+      // can read real dimensions instead of guessing/forcing a square.
+      const allPhotoUrls = (it.photos || []).map((p) => p.url).filter(Boolean);
+      const urlsToLoad = [...new Set([...(artisan.logo ? [artisan.logo] : []), ...allPhotoUrls])];
+      const loadedPairs = await Promise.all(urlsToLoad.map(async (url) => [url, await loadImageEl(url)]));
+      const imageCache = new Map(loadedPairs);
+
       const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-      const pageW = doc.internal.pageSize.getWidth();
-      let y = 48;
+      const PAGE_W = doc.internal.pageSize.getWidth();
+      const PAGE_H = doc.internal.pageSize.getHeight();
+      const MARGIN = 42;
+      const CONTENT_W = PAGE_W - MARGIN * 2;
+      const CONTENT_TOP = 48;
+      const BOTTOM_LIMIT = PAGE_H - 66;
 
-      if (artisan.logo) {
-        try { doc.addImage(artisan.logo, 'JPEG', 40, y, 48, 48); } catch (e) { /* skip */ }
+      const checkBreak = (yPos, needed) => {
+        if (yPos + needed > BOTTOM_LIMIT) { doc.addPage(); return CONTENT_TOP; }
+        return yPos;
+      };
+
+      const drawStatusPill = (rightX, topY, status) => {
+        const isDone = status === 'termine';
+        const label = isDone ? 'TERMINÉ' : 'EN COURS';
+        const ink = isDone ? PDF_COLOR.success : PDF_COLOR.warning;
+        const bg = isDone ? PDF_COLOR.successBg : PDF_COLOR.warningBg;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+        const pillW = doc.getTextWidth(label) + 16;
+        const pillH = 16;
+        doc.setFillColor(...bg);
+        doc.roundedRect(rightX - pillW, topY, pillW, pillH, pillH / 2, pillH / 2, 'F');
+        doc.setTextColor(...ink);
+        doc.text(label, rightX - pillW / 2, topY + pillH / 2 + 2.8, { align: 'center' });
+        doc.setTextColor(...PDF_COLOR.text);
+      };
+
+      const drawZoneHeader = (yPos, label) => {
+        yPos = checkBreak(yPos, 30);
+        doc.setFillColor(...PDF_COLOR.navy);
+        doc.roundedRect(MARGIN, yPos, CONTENT_W, 22, 4, 4, 'F');
+        doc.setTextColor(...PDF_COLOR.cream);
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+        doc.text(label.toUpperCase(), MARGIN + 10, yPos + 14.5);
+        doc.setTextColor(...PDF_COLOR.text);
+        return yPos + 22 + 12;
+      };
+
+      const drawTask = (yPos, text) => {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+        const lines = doc.splitTextToSize(text, CONTENT_W - 20);
+        yPos = checkBreak(yPos, lines.length * 13 + 6);
+        doc.setFillColor(...PDF_COLOR.navy);
+        doc.circle(MARGIN + 5, yPos - 3, 1.8, 'F');
+        doc.setTextColor(...PDF_COLOR.text);
+        doc.text(lines, MARGIN + 16, yPos);
+        return yPos + lines.length * 13 + 6;
+      };
+
+      const drawParagraph = (yPos, text) => {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+        doc.setTextColor(...PDF_COLOR.text);
+        const lines = doc.splitTextToSize(text, CONTENT_W);
+        yPos = checkBreak(yPos, lines.length * 13);
+        doc.text(lines, MARGIN, yPos);
+        return yPos + lines.length * 13 + 10;
+      };
+
+      // Photo grid with a subtle drop-shadow + thin border for a "card" feel, wrapping to a
+      // new row (and new page if needed) — never stretches a photo out of its aspect ratio.
+      const drawPhotoGrid = (yPos, photos, boxSize) => {
+        const usableW = CONTENT_W - 16;
+        const perRow = Math.max(1, Math.floor((usableW + 10) / (boxSize + 10)));
+        let col = 0, rowMaxH = 0, x = MARGIN + 16;
+        photos.forEach((p) => {
+          const img = imageCache.get(p.url);
+          if (!img) return;
+          if (col === perRow) { yPos += rowMaxH + 10; col = 0; x = MARGIN + 16; rowMaxH = 0; }
+          yPos = checkBreak(yPos, boxSize + 10);
+          const { w, h } = fitBox(img, boxSize, boxSize);
+          try {
+            doc.setFillColor(...PDF_COLOR.shadow);
+            doc.rect(x + 2, yPos + 2, w, h, 'F');
+            doc.addImage(img, detectImageFormat(p.url), x, yPos, w, h);
+            doc.setDrawColor(...PDF_COLOR.divider);
+            doc.setLineWidth(0.75);
+            doc.rect(x, yPos, w, h, 'S');
+          } catch (e) { /* skip */ }
+          rowMaxH = Math.max(rowMaxH, h);
+          x += boxSize + 10;
+          col++;
+        });
+        return yPos + rowMaxH + 14;
+      };
+
+      // ═══════ Header band ═══════
+      doc.setFillColor(...PDF_COLOR.navy);
+      doc.rect(0, 0, PAGE_W, 94, 'F');
+
+      const logoImg = artisan.logo && imageCache.get(artisan.logo);
+      let textX = MARGIN;
+      if (logoImg) {
+        const box = 54;
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(MARGIN, 20, box, box, 8, 8, 'F');
+        textX = MARGIN + box + 14; // reserve the space even if the image itself fails to draw
+        try {
+          const { w, h } = fitBox(logoImg, box, box);
+          doc.addImage(logoImg, detectImageFormat(artisan.logo), MARGIN + (box - w) / 2, 20 + (box - h) / 2, w, h);
+        } catch (e) { /* white backing plate stays empty, layout is unaffected */ }
       }
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-      doc.text(artisan.company || '', 100, y + 16);
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-      doc.text([artisan.contact, artisan.job, artisan.phone, artisan.email].filter(Boolean).join(' · '), 100, y + 30);
-      doc.text(artisan.address || '', 100, y + 42);
-      y += 70;
-      doc.setDrawColor(180); doc.line(40, y, pageW - 40, y); y += 26;
+      doc.setTextColor(...PDF_COLOR.cream);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+      doc.text(artisan.company || "ChantierExpress", textX, 40);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      doc.setTextColor(205, 211, 224);
+      const line1 = [artisan.contact, artisan.job].filter(Boolean).join(' · ');
+      const line2 = [artisan.phone, artisan.email].filter(Boolean).join(' · ');
+      if (line1) doc.text(line1, textX, 54);
+      if (line2) doc.text(line2, textX, 65);
+      if (artisan.address) doc.text(artisan.address, textX, 76);
 
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
-      doc.text(title || "Rapport d'intervention", 40, y); y += 26;
-
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+      doc.setTextColor(...PDF_COLOR.cream);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+      doc.text((title || "Rapport d'intervention").toUpperCase(), PAGE_W - MARGIN, 40, { align: 'right' });
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      doc.setTextColor(205, 211, 224);
       const dateStr = new Date(it.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
-      doc.text(`Client : ${client ? client.name : ''}${client && client.company ? ' — ' + client.company : ''}`, 40, y); y += 16;
-      doc.text(`Date : ${dateStr} à ${it.time}   ·   Statut : ${it.status === 'termine' ? 'Terminé' : 'En cours'}`, 40, y); y += 24;
+      doc.text(`${dateStr} à ${it.time}`, PAGE_W - MARGIN, 54, { align: 'right' });
 
+      let y = 94 + 26;
+
+      // ═══════ Client card ═══════
+      const clientSub = [client?.company, client?.address].filter(Boolean).join(' · ');
+      const cardH = clientSub ? 56 : 42;
+      doc.setFillColor(...PDF_COLOR.card);
+      doc.roundedRect(MARGIN, y, CONTENT_W, cardH, 6, 6, 'F');
+      doc.setTextColor(...PDF_COLOR.text);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(12.5);
+      doc.text(client ? client.name : 'Client inconnu', MARGIN + 14, y + 22);
+      if (clientSub) {
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+        doc.setTextColor(...PDF_COLOR.muted);
+        doc.text(clientSub, MARGIN + 14, y + 37);
+      }
+      drawStatusPill(PAGE_W - MARGIN - 14, y + (cardH - 16) / 2, it.status);
+      y += cardH + 22;
+
+      // ═══════ Content: zones/tasks or flat description ═══════
       const zones = it.structuredReport?.zones?.filter((z) => z.tasks && z.tasks.length > 0);
       if (zones && zones.length > 0) {
         zones.forEach((zone) => {
-          if (y > 700) { doc.addPage(); y = 48; }
-          doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-          doc.setTextColor(38, 49, 79);
-          doc.text(zone.title.toUpperCase(), 40, y); y += 16;
-          doc.setTextColor(0, 0, 0);
-
+          y = drawZoneHeader(y, zone.title);
           zone.tasks.forEach((task) => {
-            if (y > 720) { doc.addPage(); y = 48; }
-            doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
-            const lines = doc.splitTextToSize(`- ${task.text}`, pageW - 84);
-            doc.text(lines, 44, y); y += lines.length * 13 + 4;
-
-            const taskPhotos = (task.photos || []).map((n) => it.photos && it.photos[n - 1]).filter((p) => p && p.url);
-            if (taskPhotos.length > 0) {
-              let x = 44;
-              taskPhotos.forEach((p) => {
-                if (y + 90 > 780) { doc.addPage(); y = 48; x = 44; }
-                try { doc.addImage(p.url, 'JPEG', x, y, 80, 80); } catch (e) { /* skip */ }
-                x += 88;
-              });
-              y += 92;
-            }
-            y += 4;
+            y = drawTask(y, task.text);
+            const taskPhotos = (task.photos || [])
+              .map((n) => it.photos && it.photos[n - 1])
+              .filter((p) => p && p.url && imageCache.get(p.url));
+            if (taskPhotos.length > 0) y = drawPhotoGrid(y, taskPhotos, 118);
+            y += 2;
           });
-          y += 10;
+          y += 8;
         });
       } else {
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-        doc.text('Description des travaux', 40, y); y += 16;
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+        y = drawZoneHeader(y, 'Description des travaux');
         const cleanDescription = (it.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim();
-        const lines = doc.splitTextToSize(cleanDescription, pageW - 80);
-        doc.text(lines, 40, y); y += lines.length * 13 + 16;
-
-        const realPhotos = (it.photos || []).filter((p) => p.url);
-        if (realPhotos.length) {
-          doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-          if (y > 650) { doc.addPage(); y = 48; }
-          doc.text('Photos', 40, y); y += 14;
-          let x = 40;
-          realPhotos.forEach((p) => {
-            if (x + 150 > pageW - 40) { x = 40; y += 150; }
-            if (y + 150 > 780) { doc.addPage(); y = 48; x = 40; }
-            try { doc.addImage(p.url, 'JPEG', x, y, 140, 140); } catch (e) { /* skip */ }
-            x += 150;
-          });
-        }
+        y = drawParagraph(y, cleanDescription);
+        const realPhotos = (it.photos || []).filter((p) => p.url && imageCache.get(p.url));
+        if (realPhotos.length) y = drawPhotoGrid(y, realPhotos, 150);
       }
 
+      // ═══════ Conclusion ═══════
       if (conclusion && conclusion.trim()) {
-        if (y > 700) { doc.addPage(); y = 48; }
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-        doc.text('Conclusion', 40, y); y += 16;
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
-        const clines = doc.splitTextToSize(conclusion, pageW - 80);
-        doc.text(clines, 40, y); y += clines.length * 13 + 16;
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+        const clines = doc.splitTextToSize(conclusion, CONTENT_W - 28);
+        const boxH = clines.length * 13 + 34;
+        y = checkBreak(y, boxH);
+        doc.setFillColor(...PDF_COLOR.card);
+        doc.roundedRect(MARGIN, y, CONTENT_W, boxH, 6, 6, 'F');
+        doc.setFillColor(...PDF_COLOR.navy);
+        doc.rect(MARGIN, y, 3, boxH, 'F');
+        doc.setTextColor(...PDF_COLOR.navy);
+        doc.text('CONCLUSION', MARGIN + 14, y + 18);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+        doc.setTextColor(...PDF_COLOR.text);
+        doc.text(clines, MARGIN + 14, y + 34);
+        y += boxH + 10;
+      }
+
+      // ═══════ Footer (every page) ═══════
+      const pageCount = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setDrawColor(...PDF_COLOR.divider);
+        doc.setLineWidth(0.5);
+        doc.line(MARGIN, PAGE_H - 34, PAGE_W - MARGIN, PAGE_H - 34);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+        doc.setTextColor(...PDF_COLOR.muted);
+        doc.text('ChantierExpress', MARGIN, PAGE_H - 22);
+        doc.text(`Page ${i} / ${pageCount}`, PAGE_W - MARGIN, PAGE_H - 22, { align: 'right' });
       }
 
       const fname = `rapport-${(client ? client.name : 'client').replace(/\s+/g, '-').toLowerCase()}-${it.date.slice(0, 10)}.pdf`;
@@ -1072,7 +1294,15 @@ Texte dicté :
               />
               {(isRecording || isTranscribing) && (
                 <div className="recording-indicator">
-                  <span className="recording-dot"></span>
+                  {isRecording ? (
+                    <div className="waveform" aria-hidden="true">
+                      {waveLevels.map((lvl, i) => (
+                        <span key={i} className="waveform-bar" style={{ height: `${6 + lvl * 18}px` }} />
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="recording-dot"></span>
+                  )}
                   {isRecording ? "Enregistrement en cours — tu peux prendre des photos sans l'interrompre" : 'Transcription en cours…'}
                 </div>
               )}

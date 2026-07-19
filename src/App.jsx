@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import localforage from 'localforage';
 import {
   Mic, MicOff, Camera, Plus, Trash2, Share2, Bell, Sparkles, User, Check, X,
-  FileText, AlertTriangle, Users, Edit2, BookOpen, Home, ChevronRight,
-  Download, MessageCircle, Images
+  FileText, Users, Edit2, BookOpen, Home, ChevronRight, ChevronDown,
+  Download, Images, Pause, Play, Search, MoreHorizontal
 } from 'lucide-react';
 
 localforage.config({ name: 'ChantierExpress', storeName: 'interventions_store' });
@@ -144,8 +144,17 @@ function App() {
   const [interventionModalOpen, setInterventionModalOpen] = useState(false);
   const [draft, setDraft] = useState(EMPTY_INTERVENTION_DRAFT());
   const [isRecording, setIsRecording] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [clientQuery, setClientQuery] = useState('');
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
+  const [expandedJournalClients, setExpandedJournalClients] = useState(() => new Set());
+  const journalAutoExpandedRef = useRef(false);
+  const [cardMenuOpenId, setCardMenuOpenId] = useState(null);
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
 
   const [clientModalOpen, setClientModalOpen] = useState(false);
   const [clientDraft, setClientDraft] = useState(EMPTY_CLIENT_DRAFT());
@@ -172,7 +181,11 @@ function App() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recordingStartTimeRef = useRef(0);
+  const pausedAccumMsRef = useRef(0);
+  const pauseStartedAtRef = useRef(null);
   const photoMarkersRef = useRef([]);
+  const clientPickerRef = useRef(null);
+  const micStreamRef = useRef(null);
 
   // Live waveform while recording — an AnalyserNode tapped off the same mic stream
   // MediaRecorder uses (read-only tap, never connected to the speakers).
@@ -183,7 +196,7 @@ function App() {
   const showToast = (msg) => {
     setToastMessage(msg);
     clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => setToastMessage(''), 2600);
+    toastTimerRef.current = setTimeout(() => setToastMessage(''), 4200);
   };
 
   // ---- Load persisted data on start (seed demo data once, on the very first launch) ----
@@ -249,6 +262,49 @@ function App() {
   useEffect(() => { if (dataLoaded) localforage.setItem('interventions', interventions); }, [interventions, dataLoaded]);
   useEffect(() => { if (dataLoaded) localforage.setItem('artisan', artisan); }, [artisan, dataLoaded]);
 
+  useEffect(() => {
+    if (!clientPickerOpen) return;
+    const onPointerDown = (e) => {
+      if (clientPickerRef.current && !clientPickerRef.current.contains(e.target)) {
+        setClientPickerOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [clientPickerOpen]);
+
+  // Auto-expand every client group that has at least one CR "en cours" (once per session load on journal).
+  useEffect(() => {
+    if (tab !== 'journal' || !dataLoaded) return;
+    if (journalAutoExpandedRef.current) return;
+    const pendingIds = interventions
+      .filter((i) => i.status === 'encours')
+      .map((i) => i.clientId || '__orphan__');
+    if (pendingIds.length === 0) return;
+    journalAutoExpandedRef.current = true;
+    setExpandedJournalClients(new Set(pendingIds));
+  }, [tab, dataLoaded, interventions]);
+
+  const toggleJournalClient = (clientId) => {
+    setExpandedJournalClients((prev) => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId);
+      else next.add(clientId);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const on = () => setIsOnline(true);
+    const off = () => setIsOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => {
+      window.removeEventListener('online', on);
+      window.removeEventListener('offline', off);
+    };
+  }, []);
+
   // ---- PWA install detection ----
   useEffect(() => {
     const standaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
@@ -264,8 +320,12 @@ function App() {
     loadPersisted('visits', 0).then((v) => {
       const visits = v + 1;
       localforage.setItem('visits', visits);
-      loadPersisted('installDismissed', false).then((dismissed) => {
-        if (visits >= 3 && !dismissed && !standaloneMode) setShowInstallBanner(true);
+      Promise.all([
+        loadPersisted('installDismissed', false),
+        loadPersisted('hasCompletedCr', false),
+      ]).then(([dismissed, hasCompletedCr]) => {
+        // Banner only after the artisan has produced at least one CR (value before install ask).
+        if (visits >= 3 && hasCompletedCr && !dismissed && !standaloneMode) setShowInstallBanner(true);
       });
     });
 
@@ -342,7 +402,10 @@ function App() {
     } else {
       const newClient = { ...clientDraft, id: 'c' + Date.now() };
       setClients((prev) => [...prev, newClient]);
-      if (interventionModalOpen) setDraft((d) => ({ ...d, clientId: newClient.id }));
+      if (interventionModalOpen) {
+        setDraft((d) => ({ ...d, clientId: newClient.id }));
+        setClientQuery(newClient.name);
+      }
     }
     setClientModalOpen(false);
     showToast('Client enregistré');
@@ -354,20 +417,50 @@ function App() {
     showToast('Client supprimé');
   };
 
+  const selectClientForDraft = (client) => {
+    setDraftField('clientId', client.id);
+    setClientQuery(client.name);
+    setClientPickerOpen(false);
+  };
+
+  const filteredClientsForPicker = clients.filter((c) => {
+    const q = clientQuery.trim().toLowerCase();
+    if (!q) return true;
+    return [c.name, c.company, c.phone].filter(Boolean).some((s) => s.toLowerCase().includes(q));
+  });
+
   // ---- Intervention modal ----
   const resetPhotoMarkers = () => { photoMarkersRef.current = []; };
 
-  const openNewIntervention = () => {
-    setDraft(EMPTY_INTERVENTION_DRAFT());
+  const syncClientQueryFromDraft = (clientId) => {
+    const c = clients.find((x) => x.id === clientId);
+    setClientQuery(c ? c.name : '');
+    setClientPickerOpen(false);
+  };
+
+  const openNewIntervention = (prefillClientId = '') => {
+    const clientId = typeof prefillClientId === 'string' ? prefillClientId : '';
+    setDraft({ ...EMPTY_INTERVENTION_DRAFT(), clientId });
     resetPhotoMarkers();
+    syncClientQueryFromDraft(clientId);
     setInterventionModalOpen(true);
+  };
+
+  const openNewInterventionFromClient = () => {
+    if (!clientDraft.id) return;
+    const id = clientDraft.id;
+    setClientModalOpen(false);
+    openNewIntervention(id);
   };
 
   const openQuickDictation = () => {
     setDraft(EMPTY_INTERVENTION_DRAFT());
     resetPhotoMarkers();
+    setClientQuery('');
+    setClientPickerOpen(false);
     setInterventionModalOpen(true);
-    setTimeout(() => toggleDictation(), 250);
+    // Dictation-first : on parle tout de suite, le client se rattache après.
+    setTimeout(() => startDictation(), 250);
   };
 
   const openInterventionEdit = (id) => {
@@ -378,15 +471,36 @@ function App() {
       structuredReport: it.structuredReport || null
     });
     resetPhotoMarkers();
+    syncClientQueryFromDraft(it.clientId);
+    setClientModalOpen(false);
     setInterventionModalOpen(true);
   };
 
-  const closeInterventionModal = () => {
+  const forceCloseInterventionModal = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.onstop = null;
       mediaRecorderRef.current.stop();
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
+        micStreamRef.current = null;
+      }
     }
+    stopWaveform();
     setInterventionModalOpen(false);
     setIsRecording(false);
+    setIsPaused(false);
+    pauseStartedAtRef.current = null;
+    pausedAccumMsRef.current = 0;
+  };
+
+  const isDraftDirty = () =>
+    !!(draft.description.trim() || (draft.photos && draft.photos.length) || isRecording || isPaused);
+
+  const closeInterventionModal = () => {
+    if (isDraftDirty() && !window.confirm('Abandonner cette fiche ? Les modifications non enregistrées seront perdues.')) {
+      return;
+    }
+    forceCloseInterventionModal();
   };
 
   const setDraftField = (field, value) => setDraft((d) => ({ ...d, [field]: value }));
@@ -474,25 +588,34 @@ function App() {
     tick();
   };
 
-  const toggleDictation = async () => {
-    if (isRecording) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      stopWaveform();
-      setIsRecording(false);
-      return;
-    }
+  const getRecordingElapsedMs = () => {
+    let paused = pausedAccumMsRef.current;
+    if (pauseStartedAtRef.current) paused += Date.now() - pauseStartedAtRef.current;
+    return Date.now() - recordingStartTimeRef.current - paused;
+  };
+
+  const startDictation = async () => {
+    if (isRecording || isTranscribing) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
       const recorder = new MediaRecorder(stream);
       audioChunksRef.current = [];
       recordingStartTimeRef.current = Date.now();
+      pausedAccumMsRef.current = 0;
+      pauseStartedAtRef.current = null;
       recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       recorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
+        if (micStreamRef.current) {
+          micStreamRef.current.getTracks().forEach((t) => t.stop());
+          micStreamRef.current = null;
+        }
         stopWaveform();
+        setIsRecording(false);
+        setIsPaused(false);
+        pauseStartedAtRef.current = null;
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        if (audioBlob.size === 0) return;
         setIsTranscribing(true);
         try {
           const { text, segments } = await transcribeWithGroq(audioBlob);
@@ -510,10 +633,63 @@ function App() {
       recorder.start();
       startWaveform(stream);
       setIsRecording(true);
+      setIsPaused(false);
     } catch (err) {
       console.error(err);
       showToast("Impossible d'accéder au microphone.");
     }
+  };
+
+  const pauseDictation = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== 'recording') return;
+    if (typeof recorder.pause !== 'function') {
+      showToast('Pause non supportée sur cet appareil — arrête puis relance.');
+      return;
+    }
+    try {
+      recorder.pause();
+      if (recorder.state !== 'paused') {
+        showToast('Pause non supportée sur cet appareil — arrête puis relance.');
+        return;
+      }
+      pauseStartedAtRef.current = Date.now();
+      stopWaveform();
+      setIsPaused(true);
+    } catch (err) {
+      console.error(err);
+      showToast('Impossible de mettre en pause.');
+    }
+  };
+
+  const resumeDictation = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== 'paused') return;
+    try {
+      if (pauseStartedAtRef.current) {
+        pausedAccumMsRef.current += Date.now() - pauseStartedAtRef.current;
+        pauseStartedAtRef.current = null;
+      }
+      recorder.resume();
+      if (micStreamRef.current) startWaveform(micStreamRef.current);
+      setIsPaused(false);
+    } catch (err) {
+      console.error(err);
+      showToast('Impossible de reprendre.');
+    }
+  };
+
+  const stopDictation = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+    if (pauseStartedAtRef.current) {
+      pausedAccumMsRef.current += Date.now() - pauseStartedAtRef.current;
+      pauseStartedAtRef.current = null;
+    }
+    try { if (recorder.state === 'paused') recorder.resume(); } catch (_) { /* ignore */ }
+    recorder.stop();
+    stopWaveform();
+    setIsPaused(false);
   };
 
   // ---- Gemini: structure the dictated text into zones/tasks/photos ----
@@ -569,7 +745,8 @@ Tâche :
 2. Regroupe les tâches par zone/pièce mentionnée (ex: "Salle de bain", "Cuisine", "Chambre 2"). Si aucune zone n'est identifiable, utilise une seule zone "Général".
 3. Puces courtes et factuelles, exactement le style télégraphique d'un vrai compte rendu de chantier — voici des exemples réels du registre attendu : ${REAL_TASK_EXAMPLES}. Jamais de phrases commerciales, jamais de tournures rédigées à la première personne.
 4. Pour chaque tâche, si un ou plusieurs repères "[Photo N]" étaient à proximité dans le texte source, référence leur(s) numéro(s) N dans le champ "photos" (entiers). Ne laisse jamais "[Photo N]" dans le texte de la tâche.
-5. N'invente aucune information absente du texte source.
+5. Assigne TOUS les numéros de photo présents dans le texte (et tous les indices de 1 à ${draft.photos.length || 0} s'il y a des photos) à au moins une tâche. Aucune photo ne doit rester orpheline.
+6. N'invente aucune information absente du texte source.
 
 Texte dicté :
 "${raw}"`
@@ -585,7 +762,25 @@ Texte dicté :
       }
       const data = await response.json();
       const parsed = JSON.parse(data.candidates[0].content.parts[0].text);
-      const zones = (parsed.zones || []).filter((z) => z.tasks && z.tasks.length > 0);
+      let zones = (parsed.zones || []).filter((z) => z.tasks && z.tasks.length > 0);
+
+      // Rattache les photos non référencées (ex. ajoutées depuis la photothèque hors dictée)
+      // à la dernière tâche, pour qu'elles apparaissent dans le PDF structuré.
+      const photoCount = draft.photos.length;
+      if (photoCount > 0 && zones.length > 0) {
+        const referenced = new Set();
+        zones.forEach((z) => z.tasks.forEach((t) => (t.photos || []).forEach((n) => referenced.add(n))));
+        const orphans = [];
+        for (let i = 1; i <= photoCount; i++) {
+          if (!referenced.has(i)) orphans.push(i);
+        }
+        if (orphans.length > 0) {
+          const lastZone = zones[zones.length - 1];
+          const lastTask = lastZone.tasks[lastZone.tasks.length - 1];
+          lastTask.photos = [...(lastTask.photos || []), ...orphans];
+        }
+      }
+
       const flattened = zones.map((zone) => {
         const header = zones.length > 1 || zone.title.toLowerCase() !== 'général' ? `${zone.title.toUpperCase()}\n` : '';
         return header + zone.tasks.map((t) => `- ${t.text}`).join('\n');
@@ -621,8 +816,8 @@ Texte dicté :
           setDraft((d) => {
             const photos = [...d.photos, { id: photoId, url }];
             const photoNumber = photos.length;
-            if (isRecording) {
-              photoMarkersRef.current.push({ photoNumber, atMs: Date.now() - recordingStartTimeRef.current });
+            if (mediaRecorderRef.current?.state === 'recording') {
+              photoMarkersRef.current.push({ photoNumber, atMs: getRecordingElapsedMs() });
             }
             return { ...d, photos };
           });
@@ -653,8 +848,8 @@ Texte dicté :
         description: draft.description, conclusion: '', photos: draft.photos, structuredReport: draft.structuredReport
       }, ...prev]);
     }
-    setInterventionModalOpen(false);
-    setIsRecording(false);
+    localforage.setItem('hasCompletedCr', true);
+    forceCloseInterventionModal();
     showToast('Fiche enregistrée');
   };
 
@@ -743,7 +938,7 @@ Texte dicté :
     shadow: [222, 217, 207],
   };
 
-  const generatePdf = async () => {
+  const generatePdf = async (mode = 'download') => {
     const it = interventions.find((i) => i.id === pdfIntervId);
     if (!it) return;
     const client = clients.find((c) => c.id === it.clientId);
@@ -902,6 +1097,7 @@ Texte dicté :
       y += cardH + 22;
 
       // ═══════ Content: zones/tasks or flat description ═══════
+      const referencedPhotoIdx = new Set();
       const zones = it.structuredReport?.zones?.filter((z) => z.tasks && z.tasks.length > 0);
       if (zones && zones.length > 0) {
         zones.forEach((zone) => {
@@ -909,13 +1105,25 @@ Texte dicté :
           zone.tasks.forEach((task) => {
             y = drawTask(y, task.text);
             const taskPhotos = (task.photos || [])
-              .map((n) => it.photos && it.photos[n - 1])
+              .map((n) => {
+                referencedPhotoIdx.add(n);
+                return it.photos && it.photos[n - 1];
+              })
               .filter((p) => p && p.url && imageCache.get(p.url));
             if (taskPhotos.length > 0) y = drawPhotoGrid(y, taskPhotos, 118);
             y += 2;
           });
           y += 8;
         });
+        // Photos non référencées (photothèque hors dictée, etc.)
+        const orphanPhotos = (it.photos || [])
+          .map((p, idx) => ({ p, n: idx + 1 }))
+          .filter(({ p, n }) => p.url && imageCache.get(p.url) && !referencedPhotoIdx.has(n))
+          .map(({ p }) => p);
+        if (orphanPhotos.length > 0) {
+          y = drawZoneHeader(y, 'Photos');
+          y = drawPhotoGrid(y, orphanPhotos, 118);
+        }
       } else {
         y = drawZoneHeader(y, 'Description des travaux');
         const cleanDescription = (it.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim();
@@ -932,8 +1140,6 @@ Texte dicté :
         y = checkBreak(y, boxH);
         doc.setFillColor(...PDF_COLOR.card);
         doc.roundedRect(MARGIN, y, CONTENT_W, boxH, 6, 6, 'F');
-        doc.setFillColor(...PDF_COLOR.navy);
-        doc.rect(MARGIN, y, 3, boxH, 'F');
         doc.setTextColor(...PDF_COLOR.navy);
         doc.text('CONCLUSION', MARGIN + 14, y + 18);
         doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
@@ -956,8 +1162,34 @@ Texte dicté :
       }
 
       const fname = `rapport-${(client ? client.name : 'client').replace(/\s+/g, '-').toLowerCase()}-${it.date.slice(0, 10)}.pdf`;
+      const blob = doc.output('blob');
+      const pdfFile = new File([blob], fname, { type: 'application/pdf' });
+      const shareText = buildShareText({ ...it, title, conclusion });
+
+      if (mode === 'share') {
+        try {
+          if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+            await navigator.share({ files: [pdfFile], title: title || "Rapport d'intervention", text: shareText });
+            showToast('PDF partagé');
+            setPdfModalOpen(false);
+            return;
+          }
+        } catch (err) {
+          if (err?.name === 'AbortError') return;
+          console.error(err);
+        }
+        // Pas de partage fichier (souvent iOS) : enregistrer le PDF + ouvrir WhatsApp avec le texte.
+        // Évite le share sheet qui n'ouvre pas WhatsApp directement.
+        doc.save(fname);
+        const waUrl = 'https://api.whatsapp.com/send?text=' + encodeURIComponent(shareText);
+        window.open(waUrl, '_self');
+        showToast('PDF enregistré — WhatsApp ouvert');
+        setPdfModalOpen(false);
+        return;
+      }
+
       doc.save(fname);
-      showToast('PDF généré');
+      showToast('PDF enregistré');
       setPdfModalOpen(false);
     } finally {
       setPdfGenerating(false);
@@ -972,40 +1204,24 @@ Texte dicté :
     return `Rapport d'intervention — ${client ? client.name : ''}\n${dateStr} à ${it.time} (${it.status === 'termine' ? 'Terminé' : 'En cours'})\n\n${cleanDescription}`;
   };
 
-  const shareWhatsapp = async (id) => {
-    const it = interventions.find((i) => i.id === id);
-    const text = buildShareText(it);
-    const photos = (it.photos || []).filter((p) => p.url);
+  // Deep-link WhatsApp (pas le share sheet). Sur iOS Safari/PWA, navigator.share
+  // n'ouvre jamais WhatsApp directement ; api.whatsapp.com + navigation _self oui.
+  // Doit rester synchrone au clic (pas d'await avant) sinon iOS bloque le handoff.
+  const openWhatsApp = (text) => {
+    const url = 'https://api.whatsapp.com/send?text=' + encodeURIComponent(text);
+    window.open(url, '_self');
+  };
 
-    if (photos.length > 0) {
-      try {
-        const files = await Promise.all(photos.map(async (p, i) => {
-          const res = await fetch(p.url);
-          const blob = await res.blob();
-          return new File([blob], `chantier-${i + 1}.jpg`, { type: blob.type || 'image/jpeg' });
-        }));
-        if (navigator.canShare && navigator.canShare({ files })) {
-          await navigator.share({ text, files });
-          return;
-        }
-      } catch (err) {
-        if (err.name === 'AbortError') return;
-        console.error('Native share with photos failed, falling back to text-only', err);
-      }
-    }
-    if (navigator.share) {
-      try { await navigator.share({ title: "Rapport d'intervention", text }); return; }
-      catch (e) { /* fall through to wa.me link */ }
-    }
-    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+  const shareIntervention = (id) => {
+    const it = interventions.find((i) => i.id === id);
+    if (!it) return;
+    openWhatsApp(buildShareText(it));
   };
 
   // ---- Derived render data ----
   const TAB_TITLES = { journal: 'Journal de chantier', clients: 'Annuaire Clients', profil: 'Profil Artisan', guide: 'Guide & Aide' };
   const artisanInitial = (artisan.company || artisan.contact || 'C').trim().charAt(0).toUpperCase();
   const pendingInterventions = interventions.filter((i) => i.status === 'encours');
-
-  const sortedInterventions = [...interventions].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const dateLabelFor = (dateIso) => {
     const d = new Date(dateIso);
@@ -1015,6 +1231,96 @@ Texte dicté :
     if (d.toDateString() === yest.toDateString()) return 'Hier';
     return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
   };
+
+  const journalGroups = (() => {
+    const map = new Map();
+    interventions.forEach((it) => {
+      const key = it.clientId || '__orphan__';
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(it);
+    });
+    return [...map.entries()].map(([clientId, items]) => {
+      const client = clients.find((c) => c.id === clientId);
+      const sorted = [...items].sort((a, b) => new Date(b.date) - new Date(a.date));
+      return {
+        clientId,
+        client,
+        name: client ? client.name : 'Client supprimé',
+        subline: client ? [client.company, client.phone].filter(Boolean).join(' · ') : '',
+        items: sorted,
+        latest: sorted[0]?.date
+      };
+    }).sort((a, b) => new Date(b.latest) - new Date(a.latest));
+  })();
+
+  const clientHistory = clientDraft.id
+    ? interventions
+      .filter((i) => i.clientId === clientDraft.id)
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+    : [];
+
+  const renderInterventionCard = (it) => (
+    <div key={it.id} className="intervention-card">
+      <div className="intervention-card-body">
+        <div className="intervention-card-head">
+          <div>
+            <div className="intervention-card-date">{dateLabelFor(it.date)} · {it.time}</div>
+          </div>
+          <span className={`tag ${it.status === 'termine' ? 'tag-accent' : 'tag-neutral'}`}>
+            {it.status === 'termine' ? 'Terminé' : 'En cours'}
+          </span>
+        </div>
+        <p className="intervention-card-desc">{(it.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim()}</p>
+      </div>
+
+      {(it.photos || []).length > 0 && (
+        <div className="intervention-card-photos">
+          {it.photos.map((p) => (
+            p.url
+              ? <img key={p.id} src={p.url} alt="Chantier" className="intervention-card-photo" />
+              : <div key={p.id} className="intervention-card-photo photo-placeholder"><Camera size={18} /></div>
+          ))}
+        </div>
+      )}
+
+      <div className="intervention-card-footer">
+        <button type="button" className="intervention-card-action primary" onClick={() => openPdfModal(it.id)}>
+          <FileText size={17} /><span>PDF</span>
+        </button>
+        <button type="button" className="intervention-card-action whatsapp" onClick={() => shareIntervention(it.id)}>
+          <Share2 size={17} /><span>WhatsApp</span>
+        </button>
+        <div className="intervention-card-menu-wrap">
+          <button
+            type="button"
+            className="intervention-card-action"
+            aria-label="Plus d'actions"
+            onClick={() => setCardMenuOpenId((id) => (id === it.id ? null : it.id))}
+          >
+            <MoreHorizontal size={17} /><span>Plus</span>
+          </button>
+          {cardMenuOpenId === it.id && (
+            <div className="intervention-card-menu">
+              <button
+                type="button"
+                className="intervention-card-menu-item"
+                onClick={() => { setCardMenuOpenId(null); openInterventionEdit(it.id); }}
+              >
+                <Edit2 size={15} /> Modifier
+              </button>
+              <button
+                type="button"
+                className="intervention-card-menu-item danger"
+                onClick={() => { setCardMenuOpenId(null); deleteIntervention(it.id); }}
+              >
+                <Trash2 size={15} /> Supprimer
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="phone-shell">
@@ -1028,6 +1334,9 @@ Texte dicté :
         <div className="header-titles">
           <div className="header-title">{TAB_TITLES[tab]}</div>
           <div className="header-subtitle">{artisan.company || artisan.contact || ''}</div>
+        </div>
+        <div className={`offline-badge ${isOnline ? 'online' : 'offline'}`} title={isOnline ? 'En ligne — données aussi en local' : 'Hors-ligne — données locales'}>
+          {isOnline ? 'Local' : 'Hors-ligne'}
         </div>
         <div style={{ position: 'relative' }} ref={notificationsPopoverRef}>
           <button
@@ -1060,7 +1369,7 @@ Texte dicté :
                   return (
                     <div key={item.id} className="notification-item" style={{ cursor: 'pointer' }} onClick={() => { openInterventionEdit(item.id); setShowNotificationsPopover(false); }}>
                       <span className="notification-item-title">{client ? client.name : 'Client inconnu'}</span>
-                      <span className="notification-item-desc">Dicté à {item.time} — cliquez pour compléter.</span>
+                      <span className="notification-item-desc">Dicté à {item.time} — appuie pour compléter.</span>
                     </div>
                   );
                 })}
@@ -1070,16 +1379,7 @@ Texte dicté :
         </div>
       </header>
 
-      {!GEMINI_API_KEY && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', background: 'rgba(239,68,68,0.08)', fontSize: '0.75rem', color: 'var(--color-error)' }}>
-          <AlertTriangle size={14} /> Clé Gemini manquante dans .env
-        </div>
-      )}
-      {!GROQ_API_KEY && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px', background: 'rgba(239,68,68,0.08)', fontSize: '0.75rem', color: 'var(--color-error)' }}>
-          <AlertTriangle size={14} /> Clé Groq manquante dans .env
-        </div>
-      )}
+      {/* Clés API : plus de bannière rouge en tête — toast au moment d'utiliser Dicter/Optimiser */}
 
       {/* ═══════════════ INSTALL BANNER ═══════════════ */}
       {showInstallBanner && !isStandalone && (
@@ -1096,64 +1396,62 @@ Texte dicté :
         {/* ---------- TAB: JOURNAL ---------- */}
         {tab === 'journal' && (
           <div>
-            <div className="stat-grid">
-              <div className="stat-card">
-                <div className="stat-value">{interventions.length}</div>
-                <div className="stat-label">Interventions</div>
+            {pendingInterventions.length > 0 ? (
+              <button
+                type="button"
+                className="journal-pending-strip"
+                onClick={() => {
+                  const first = pendingInterventions[0];
+                  const cid = first.clientId || '__orphan__';
+                  setExpandedJournalClients((prev) => new Set([...prev, cid]));
+                  openInterventionEdit(first.id);
+                }}
+              >
+                <span className="journal-pending-count">{pendingInterventions.length}</span>
+                <span className="journal-pending-text">
+                  {pendingInterventions.length === 1
+                    ? 'chantier à finaliser — reprendre'
+                    : 'chantiers à finaliser — reprendre le plus récent'}
+                </span>
+                <ChevronRight size={18} />
+              </button>
+            ) : interventions.length > 0 ? (
+              <div className="journal-pending-strip done">
+                <Check size={16} />
+                <span className="journal-pending-text">Tous les chantiers sont terminés</span>
               </div>
-              <div className="stat-card">
-                <div className="stat-value" style={{ color: 'var(--color-accent-700)' }}>{interventions.filter((i) => i.status === 'termine').length}</div>
-                <div className="stat-label">Terminées</div>
-              </div>
-            </div>
+            ) : null}
 
             <button className="btn btn-primary btn-block" onClick={openNewIntervention} style={{ minHeight: 52, fontSize: 14, marginBottom: 22 }}>
               <Plus size={18} strokeWidth={2.4} /> Nouvelle Fiche
             </button>
 
-            {sortedInterventions.length > 0 ? (
-              <div className="intervention-list">
-                {sortedInterventions.map((it) => {
-                  const client = clients.find((c) => c.id === it.clientId);
+            {journalGroups.length > 0 ? (
+              <div className="journal-client-groups">
+                {journalGroups.map((group) => {
+                  const expanded = expandedJournalClients.has(group.clientId);
                   return (
-                    <div key={it.id} className="intervention-card">
-                      <div className="intervention-card-body">
-                        <div className="intervention-card-head">
-                          <div>
-                            <div className="intervention-card-client">{client ? client.name : 'Client supprimé'}</div>
-                            <div className="intervention-card-date">{dateLabelFor(it.date)} · {it.time}</div>
+                    <div key={group.clientId} className={`journal-client-group ${expanded ? 'expanded' : ''}`}>
+                      <button
+                        type="button"
+                        className="journal-client-header"
+                        onClick={() => toggleJournalClient(group.clientId)}
+                      >
+                        <div className="client-row-avatar">{(group.name || '?').trim().charAt(0).toUpperCase()}</div>
+                        <div className="client-row-info">
+                          <div className="client-row-name">{group.name}</div>
+                          <div className="client-row-subline">
+                            {group.items.length} compte-rendu{group.items.length > 1 ? 's' : ''}
+                            {group.subline ? ` · ${group.subline}` : ''}
                           </div>
-                          <span className={`tag ${it.status === 'termine' ? 'tag-accent' : 'tag-neutral'}`}>
-                            {it.status === 'termine' ? 'Terminé' : 'En cours'}
-                          </span>
                         </div>
-                        <p className="intervention-card-desc">{(it.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim()}</p>
-                      </div>
-
-                      {(it.photos || []).length > 0 && (
-                        <div className="intervention-card-photos">
-                          {it.photos.map((p) => (
-                            p.url
-                              ? <img key={p.id} src={p.url} alt="Chantier" className="intervention-card-photo" />
-                              : <div key={p.id} className="intervention-card-photo photo-placeholder"><Camera size={18} /></div>
-                          ))}
+                        {expanded ? <ChevronDown size={18} className="client-row-chevron" /> : <ChevronRight size={18} className="client-row-chevron" />}
+                      </button>
+                      {expanded && (
+                        <div className="intervention-list journal-client-crs">
+                          {group.items.map((it) => renderInterventionCard(it))}
                         </div>
                       )}
-
-                      <div className="intervention-card-footer">
-                        <button className="intervention-card-action" onClick={() => openPdfModal(it.id)}>
-                          <FileText size={17} /><span>PDF</span>
-                        </button>
-                        <button className="intervention-card-action whatsapp" onClick={() => shareWhatsapp(it.id)}>
-                          <MessageCircle size={17} /><span>WhatsApp</span>
-                        </button>
-                        <button className="intervention-card-action" onClick={() => openInterventionEdit(it.id)}>
-                          <Edit2 size={16} /><span>Modifier</span>
-                        </button>
-                        <button className="intervention-card-action danger" onClick={() => deleteIntervention(it.id)}>
-                          <Trash2 size={16} /><span>Supprimer</span>
-                        </button>
-                      </div>
                     </div>
                   );
                 })}
@@ -1201,7 +1499,15 @@ Texte dicté :
                 </button>
               ))}
             </div>
-            {clients.length === 0 && <p style={{ textAlign: 'center', opacity: 0.6, fontSize: 13, padding: '30px 0' }}>Aucun client enregistré.</p>}
+            {clients.length === 0 && (
+              <div className="empty-state">
+                <h4>Aucun client pour l'instant</h4>
+                <p className="empty-state-sub">Ajoute ton premier client pour rattacher les comptes rendus.</p>
+                <button className="btn btn-primary" onClick={openNewClient} style={{ minHeight: 48 }}>
+                  <Plus size={16} /> Nouveau Client
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -1234,15 +1540,26 @@ Texte dicté :
             <button className="btn btn-primary btn-block" onClick={saveArtisan} style={{ minHeight: 50, marginTop: 20 }}>
               {artisanSaved ? 'Enregistré ✓' : 'Enregistrer le profil'}
             </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-block"
+              style={{ minHeight: 48, marginTop: 12 }}
+              onClick={() => goTab('guide')}
+            >
+              <BookOpen size={16} /> Guide & aide
+            </button>
           </div>
         )}
 
         {/* ---------- TAB: GUIDE ---------- */}
         {tab === 'guide' && (
           <div className="guide-list">
+            <button type="button" className="text-link-btn" onClick={() => goTab('profil')} style={{ marginBottom: 8, alignSelf: 'flex-start' }}>
+              ← Retour au profil
+            </button>
             <div className="guide-row">
               <div className="guide-row-head"><Mic size={22} color="var(--color-accent)" /><h4>Dictée vocale</h4></div>
-              <p>Appuie sur le micro central pour démarrer l'enregistrement, décris tes travaux en te déplaçant de pièce en pièce, puis appuie à nouveau pour arrêter : la transcription apparaît une fois l'enregistrement terminé.</p>
+              <p>Appuie sur Dicter pour démarrer, Pause si tu es interrompu, puis Arrêter pour lancer la transcription. Tu peux prendre des photos pendant l'enregistrement.</p>
             </div>
             <div className="guide-row">
               <div className="guide-row-head"><Sparkles size={22} color="var(--color-accent)" /><h4>Optimisation automatique</h4></div>
@@ -1250,7 +1567,7 @@ Texte dicté :
             </div>
             <div className="guide-row">
               <div className="guide-row-head"><FileText size={22} color="var(--color-accent)" /><h4>PDF & partage</h4></div>
-              <p>Relis et édite le rapport, génère un PDF avec logo et photos, puis partage-le par WhatsApp ou par email en un geste — tout fonctionne hors-ligne.</p>
+              <p>Relis et édite le rapport, télécharge le PDF ou partage-le (fichier réel, pas un lien) — tout fonctionne hors-ligne.</p>
             </div>
           </div>
         )}
@@ -1267,11 +1584,8 @@ Texte dicté :
         <button className={`nav-mic-btn ${isRecording ? 'recording' : ''}`} onClick={openQuickDictation} aria-label="Dicter une nouvelle intervention">
           {isRecording ? <MicOff size={24} /> : <Mic size={24} />}
         </button>
-        <button className={`nav-btn ${tab === 'profil' ? 'active' : ''}`} onClick={() => goTab('profil')}>
+        <button className={`nav-btn ${tab === 'profil' || tab === 'guide' ? 'active' : ''}`} onClick={() => goTab('profil')}>
           <User size={21} /><span>Profil</span>
-        </button>
-        <button className={`nav-btn ${tab === 'guide' ? 'active' : ''}`} onClick={() => goTab('guide')}>
-          <BookOpen size={21} /><span>Guide</span>
         </button>
       </nav>
 
@@ -1285,56 +1599,54 @@ Texte dicté :
             </div>
 
             <div className="field">
-              <label>Client</label>
-              <select className="input" value={draft.clientId} onChange={(e) => setDraftField('clientId', e.target.value)}>
-                <option value="">Sélectionner un client…</option>
-                {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-
-            <div className="field">
-              <label>Statut</label>
-              <div className="seg">
-                <label className={`seg-opt ${draft.status === 'encours' ? 'active' : ''}`}>
-                  <input type="radio" name="status" checked={draft.status === 'encours'} onChange={() => setDraftField('status', 'encours')} />En cours
-                </label>
-                <label className={`seg-opt ${draft.status === 'termine' ? 'active' : ''}`}>
-                  <input type="radio" name="status" checked={draft.status === 'termine'} onChange={() => setDraftField('status', 'termine')} />Terminé
-                </label>
-              </div>
-            </div>
-
-            <div className="field">
               <label>Description de l'intervention</label>
               <textarea
                 className="input" style={{ minHeight: 130 }}
-                placeholder="Décris les travaux réalisés…"
+                placeholder="Dicte ou saisis les travaux réalisés…"
                 value={draft.description}
                 onChange={(e) => setDraftField('description', e.target.value)}
               />
               {(isRecording || isTranscribing) && (
-                <div className="recording-indicator">
-                  {isRecording ? (
+                <div className={`recording-indicator ${isPaused ? 'paused' : ''}`}>
+                  {isRecording && !isPaused ? (
                     <div className="waveform" aria-hidden="true">
                       {waveLevels.map((lvl, i) => (
                         <span key={i} className="waveform-bar" style={{ height: `${6 + lvl * 18}px` }} />
                       ))}
                     </div>
                   ) : (
-                    <span className="recording-dot"></span>
+                    <span className={`recording-dot ${isPaused ? 'paused' : ''}`}></span>
                   )}
-                  {isRecording ? "Enregistrement en cours — tu peux prendre des photos sans l'interrompre" : 'Transcription en cours…'}
+                  {isTranscribing
+                    ? 'Transcription en cours…'
+                    : isPaused
+                      ? 'En pause — appuie sur Reprendre pour continuer'
+                      : "Enregistrement en cours — tu peux prendre des photos sans l'interrompre"}
                 </div>
               )}
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                <button className="btn btn-secondary" style={{ flex: 1, minHeight: 48 }} onClick={toggleDictation} disabled={isTranscribing}>
-                  {isRecording ? <MicOff size={16} /> : <Mic size={16} />}
-                  &nbsp;{isTranscribing ? 'Transcription…' : isRecording ? 'Arrêter' : 'Dicter'}
-                </button>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                {!isRecording ? (
+                  <button className="btn btn-secondary" style={{ flex: 1, minHeight: 48 }} onClick={startDictation} disabled={isTranscribing}>
+                    <Mic size={16} />
+                    &nbsp;{isTranscribing ? 'Transcription…' : 'Dicter'}
+                  </button>
+                ) : (
+                  <>
+                    <button className="btn btn-secondary" style={{ flex: 1, minHeight: 48 }} onClick={isPaused ? resumeDictation : pauseDictation} disabled={isTranscribing}>
+                      {isPaused ? <Play size={16} /> : <Pause size={16} />}
+                      &nbsp;{isPaused ? 'Reprendre' : 'Pause'}
+                    </button>
+                    <button className="btn btn-secondary" style={{ flex: 1, minHeight: 48 }} onClick={stopDictation} disabled={isTranscribing}>
+                      <MicOff size={16} />
+                      &nbsp;Arrêter
+                    </button>
+                  </>
+                )}
                 <button className="btn btn-ai" style={{ flex: 1, minHeight: 48 }} onClick={optimizeText} disabled={isOptimizing || !draft.description.trim()}>
                   <Sparkles size={16} />&nbsp;{isOptimizing ? 'Optimisation…' : 'Optimiser'}
                 </button>
               </div>
+              <p className="form-hint sheet-tip">Optimiser regroupe ta dictée par pièce (cuisine, SDB…) pour le PDF client.</p>
             </div>
 
             <div className="field">
@@ -1350,16 +1662,97 @@ Texte dicté :
                 ))}
                 <label className="photo-add-btn" title="Prendre une photo">
                   <Camera size={20} />
+                  <span className="photo-add-label">Photo</span>
                   <input type="file" accept="image/*" capture="environment" onChange={onPhotosChange} style={{ display: 'none' }} />
                 </label>
                 <label className="photo-add-btn" title="Choisir depuis la bibliothèque">
                   <Images size={20} />
+                  <span className="photo-add-label">Galerie</span>
                   <input type="file" accept="image/*" multiple onChange={onPhotosChange} style={{ display: 'none' }} />
                 </label>
               </div>
             </div>
 
-            <div className="dialog-actions">
+            <div className="field">
+              <label>Client</label>
+              <div className="client-combobox" ref={clientPickerRef}>
+                <div className="client-combobox-input-wrap">
+                  <Search size={16} className="client-combobox-search-icon" />
+                  <input
+                    className="input client-combobox-input"
+                    placeholder="Rechercher un client…"
+                    value={clientQuery}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setClientQuery(value);
+                      setClientPickerOpen(true);
+                      // Ne clear le clientId que si la saisie ne correspond plus au client sélectionné
+                      // (évite de perdre la sélection en corrigeant une lettre).
+                      if (draft.clientId) {
+                        const selected = clients.find((c) => c.id === draft.clientId);
+                        const name = (selected?.name || '').toLowerCase();
+                        const q = value.trim().toLowerCase();
+                        if (q && !name.startsWith(q) && !name.includes(q)) {
+                          setDraftField('clientId', '');
+                        }
+                      }
+                    }}
+                    onFocus={() => setClientPickerOpen(true)}
+                    autoComplete="off"
+                  />
+                </div>
+                {clientPickerOpen && (
+                  <div className="client-combobox-dropdown">
+                    {filteredClientsForPicker.map((c) => (
+                      <button
+                        type="button"
+                        key={c.id}
+                        className={`client-combobox-option ${draft.clientId === c.id ? 'selected' : ''}`}
+                        onClick={() => selectClientForDraft(c)}
+                      >
+                        <span className="client-combobox-option-name">{c.name}</span>
+                        {(c.company || c.phone) && (
+                          <span className="client-combobox-option-sub">{[c.company, c.phone].filter(Boolean).join(' · ')}</span>
+                        )}
+                      </button>
+                    ))}
+                    {filteredClientsForPicker.length === 0 && (
+                      <div className="client-combobox-empty">Aucun client trouvé</div>
+                    )}
+                    <button
+                      type="button"
+                      className="client-combobox-option new"
+                      onClick={() => { setClientPickerOpen(false); openNewClient(); }}
+                    >
+                      <Plus size={15} /> Nouveau client
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Statut</label>
+              <div className="seg">
+                <label className={`seg-opt ${draft.status === 'encours' ? 'active' : ''}`}>
+                  <input type="radio" name="status" checked={draft.status === 'encours'} onChange={() => setDraftField('status', 'encours')} />En cours
+                </label>
+                <label className={`seg-opt ${draft.status === 'termine' ? 'active' : ''}`}>
+                  <input type="radio" name="status" checked={draft.status === 'termine'} onChange={() => setDraftField('status', 'termine')} />Terminé
+                </label>
+              </div>
+            </div>
+
+            <div className="dialog-actions" style={{ flexDirection: 'column', gap: 8 }}>
+              {(!draft.clientId || !draft.description.trim()) && (
+                <p className="form-hint">
+                  {!draft.clientId && !draft.description.trim()
+                    ? 'Dicte ou saisis une description, puis rattache un client pour enregistrer.'
+                    : !draft.clientId
+                      ? 'Rattache un client pour enregistrer la fiche.'
+                      : 'Ajoute une description (dicte ou saisis) pour enregistrer.'}
+                </p>
+              )}
               <button className="btn btn-primary btn-block" onClick={saveIntervention} disabled={!draft.clientId || !draft.description.trim()} style={{ minHeight: 52 }}>
                 Enregistrer la fiche
               </button>
@@ -1371,9 +1764,9 @@ Texte dicté :
       {/* ═══════════════ MODAL: CLIENT ═══════════════ */}
       {clientModalOpen && (
         <div className="dialog-backdrop centered">
-          <div className="dialog">
+          <div className="dialog dialog-client-fiche">
             <div className="dialog-head">
-              <div className="dialog-title">{clientDraft.id ? 'Modifier le client' : 'Nouveau client'}</div>
+              <div className="dialog-title">{clientDraft.id ? 'Fiche client' : 'Nouveau client'}</div>
               <button className="dialog-close" onClick={closeClientModal}><X size={20} /></button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1383,6 +1776,43 @@ Texte dicté :
               <div className="field"><label>Email</label><input className="input" value={clientDraft.email} onChange={(e) => setClientField('email', e.target.value)} /></div>
               <div className="field"><label>Adresse</label><textarea className="input" style={{ minHeight: 60 }} value={clientDraft.address} onChange={(e) => setClientField('address', e.target.value)} /></div>
             </div>
+
+            {clientDraft.id && (
+              <div className="client-history">
+                <div className="client-history-head">
+                  <h4>Historique des comptes rendus</h4>
+                  <button type="button" className="btn btn-secondary" style={{ minHeight: 36, fontSize: 12, padding: '0 12px' }} onClick={openNewInterventionFromClient}>
+                    <Plus size={14} /> Nouvelle fiche
+                  </button>
+                </div>
+                {clientHistory.length === 0 ? (
+                  <p className="client-history-empty">Aucun compte rendu pour ce client.</p>
+                ) : (
+                  <div className="client-history-list">
+                    {clientHistory.map((it) => (
+                      <button
+                        type="button"
+                        key={it.id}
+                        className="client-history-row"
+                        onClick={() => openInterventionEdit(it.id)}
+                      >
+                        <div>
+                          <div className="client-history-row-date">{dateLabelFor(it.date)} · {it.time}</div>
+                          <div className="client-history-row-desc">
+                            {(it.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim().slice(0, 90) || 'Sans description'}
+                            {(it.description || '').length > 90 ? '…' : ''}
+                          </div>
+                        </div>
+                        <span className={`tag ${it.status === 'termine' ? 'tag-accent' : 'tag-neutral'}`}>
+                          {it.status === 'termine' ? 'Terminé' : 'En cours'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="dialog-actions" style={{ justifyContent: 'space-between' }}>
               {clientDraft.id ? (
                 <button className="text-link-btn danger" onClick={deleteClientDraft}>Supprimer</button>
@@ -1412,12 +1842,47 @@ Texte dicté :
                 <div className="pdf-preview-meta">
                   {it && new Date(it.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })} · {it && (it.status === 'termine' ? 'Terminé' : 'En cours')}
                 </div>
-                <div style={{ whiteSpace: 'pre-wrap' }}>{it && it.description.replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim()}</div>
+                {(() => {
+                  const zones = it?.structuredReport?.zones?.filter((z) => z.tasks && z.tasks.length > 0);
+                  if (zones && zones.length > 0) {
+                    return (
+                      <div className="pdf-preview-structured">
+                        {zones.map((zone, zi) => (
+                          <div key={zi} className="pdf-preview-zone">
+                            <div className="pdf-preview-zone-title">{zone.title}</div>
+                            <ul>
+                              {zone.tasks.map((task, ti) => (
+                                <li key={ti}>
+                                  {task.text}
+                                  {(task.photos || []).length > 0 && (
+                                    <span className="pdf-preview-photo-ref"> · Photo{(task.photos.length > 1 ? 's' : '')} {task.photos.join(', ')}</span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                  const clean = (it?.description || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+                  return (
+                    <>
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{clean}</div>
+                      {clean && (
+                        <p className="pdf-preview-hint">Pas encore structuré — utilise Optimiser sur la fiche pour un CR par pièce.</p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
               <div className="field"><label>Conclusion</label><textarea className="input" style={{ minHeight: 70 }} placeholder="Recommandations, points de vigilance…" value={pdfDraft.conclusion} onChange={(e) => setPdfDraft((d) => ({ ...d, conclusion: e.target.value }))} /></div>
-              <div className="dialog-actions" style={{ flexDirection: 'column' }}>
-                <button className="btn btn-primary btn-block" onClick={generatePdf} disabled={pdfGenerating} style={{ minHeight: 52 }}>
-                  {pdfGenerating ? 'Génération…' : 'Générer le PDF'}
+              <div className="dialog-actions" style={{ flexDirection: 'column', gap: 8 }}>
+                <button className="btn btn-primary btn-block" onClick={() => generatePdf('download')} disabled={pdfGenerating} style={{ minHeight: 52 }}>
+                  <Download size={16} />&nbsp;{pdfGenerating ? 'Génération…' : 'Télécharger le PDF'}
+                </button>
+                <button className="btn btn-secondary btn-block" onClick={() => generatePdf('share')} disabled={pdfGenerating} style={{ minHeight: 52 }}>
+                  <Share2 size={16} />&nbsp;{pdfGenerating ? 'Génération…' : 'Partager le PDF'}
                 </button>
               </div>
             </div>

@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-19T16:37:00.000Z",
+  "title": "Design System: ChantierExpress",
+  "extensions": {
+    "colorMeta": {
+      "primary": { "role": "primary", "displayName": "Chantier Navy", "canonical": "#26314f", "tonalRamp": ["#1a2340", "#26314f", "#3d4a6b", "#5a6789", "#8a93ad", "#b8becd", "#d8dce8", "#eef0f5"] },
+      "paper": { "role": "neutral", "displayName": "Jobsite Paper", "canonical": "#faf8f5", "tonalRamp": ["#242019", "#4a4437", "#6b6352", "#8a8170", "#a89f8b", "#ddd7cc", "#ece9e2", "#faf8f5"] },
+      "ai": { "role": "secondary", "displayName": "AI Violet", "canonical": "#5b4fd6", "tonalRamp": ["#2e2870", "#3f36a0", "#5b4fd6", "#7a70e0", "#9a92e8", "#bbb5f0", "#dcd9f7", "#f0eefc"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Tab and dialog titles." },
+      "body": { "displayName": "Body", "purpose": "Descriptions and field text." },
+      "label": { "displayName": "Label", "purpose": "Field labels and meta." }
+    },
+    "shadows": [
+      { "name": "rest", "value": "0 1px 3px rgba(28, 27, 25, 0.07)", "purpose": "Subtle card rest." },
+      { "name": "raise", "value": "0 8px 24px rgba(28, 27, 25, 0.09)", "purpose": "Popovers and sheets." },
+      { "name": "modal", "value": "0 24px 60px rgba(28, 27, 25, 0.18)", "purpose": "Dialogs." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "0.15s cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Default state transitions." }
+    ],
+    "breakpoints": [
+      { "name": "phone-shell", "value": "480px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Full-width chantier CTA.",
+      "html": "<button class=\"ds-btn-primary\">Nouvelle Fiche</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 52px; background: #26314f; color: #faf8f5; border: 0; border-radius: 12px; font-family: Outfit, system-ui, sans-serif; font-weight: 700; font-size: 14px; padding: 10px 16px; cursor: pointer; transition: 0.15s cubic-bezier(0.4, 0, 0.2, 1); } .ds-btn-primary:hover { background: #1a2340; } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px #eef0f5; } .ds-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Secondary actions (Pause, Dicter).",
+      "html": "<button class=\"ds-btn-secondary\">Dicter</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; background: transparent; color: #1c1b19; border: 1px solid rgba(28, 27, 25, 0.12); border-radius: 12px; font-family: Outfit, system-ui, sans-serif; font-weight: 700; font-size: 13px; padding: 10px 16px; cursor: pointer; } .ds-btn-secondary:hover { background: #f7f5f1; } .ds-btn-secondary:focus-visible { outline: none; box-shadow: 0 0 0 3px #eef0f5; }"
+    },
+    {
+      "name": "AI Button",
+      "kind": "button",
+      "refersTo": "button-ai",
+      "description": "Optimiser only.",
+      "html": "<button class=\"ds-btn-ai\">Optimiser</button>",
+      "css": ".ds-btn-ai { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; background: #5b4fd6; color: #fff; border: 0; border-radius: 12px; font-family: Outfit, system-ui, sans-serif; font-weight: 700; font-size: 13px; padding: 10px 16px; cursor: pointer; } .ds-btn-ai:hover { filter: brightness(0.95); } .ds-btn-ai:disabled { opacity: 0.5; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Form fields and search combobox.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-label\">Client</span><input class=\"ds-input\" placeholder=\"Rechercher un client…\" /></label>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 6px; } .ds-label { font-family: Outfit, system-ui, sans-serif; font-size: 12px; font-weight: 700; color: #6b6352; } .ds-input { width: 100%; background: #f7f5f1; border: 1px solid rgba(28, 27, 25, 0.12); border-radius: 8px; padding: 12px 14px; font-family: Outfit, system-ui, sans-serif; font-size: 14px; color: #1c1b19; } .ds-input:focus { outline: none; border-color: #26314f; background: #fff; box-shadow: 0 0 0 3px #eef0f5; }"
+    },
+    {
+      "name": "Status Tag",
+      "kind": "chip",
+      "refersTo": "tag-done",
+      "description": "Terminé / En cours pills.",
+      "html": "<span class=\"ds-tag ds-tag-done\">Terminé</span>",
+      "css": ".ds-tag { display: inline-flex; align-items: center; border-radius: 9999px; padding: 4px 10px; font-family: Outfit, system-ui, sans-serif; font-size: 11px; font-weight: 700; } .ds-tag-done { background: #eef0f5; color: #26314f; }"
+    },
+    {
+      "name": "Intervention Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "CR card under a client group.",
+      "html": "<article class=\"ds-card\"><div class=\"ds-card-date\">Aujourd'hui · 09:15</div><p class=\"ds-card-desc\">Remplacement du groupe de sécurité…</p></article>",
+      "css": ".ds-card { background: #fff; border: 1px solid rgba(28, 27, 25, 0.12); border-radius: 12px; padding: 14px; } .ds-card-date { font-family: Outfit, system-ui, sans-serif; font-weight: 650; font-size: 13px; color: #1c1b19; } .ds-card-desc { margin: 8px 0 0; font-size: 13px; line-height: 1.4; color: #4a4437; }"
+    },
+    {
+      "name": "Bottom Nav",
+      "kind": "nav",
+      "refersTo": "nav",
+      "description": "Thumb-zone app navigation.",
+      "html": "<nav class=\"ds-nav\"><button class=\"ds-nav-item active\">Journal</button><button class=\"ds-nav-item\">Clients</button></nav>",
+      "css": ".ds-nav { display: flex; gap: 4px; padding: 8px 12px; background: #fff; border-top: 1px solid rgba(28, 27, 25, 0.12); } .ds-nav-item { flex: 1; min-height: 48px; border: 0; background: transparent; color: #6b6352; font-family: Outfit, system-ui, sans-serif; font-size: 10px; font-weight: 600; cursor: pointer; } .ds-nav-item.active { color: #26314f; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Le carnet de chantier",
+    "overview": "L’interface est un carnet de terrain numérique : pages courtes, écriture nette, navy sérieux, papier clair. Elle sert l’artisan qui a une main libre et deux minutes — pas un dashboard SaaS.",
+    "keyCharacteristics": [
+      "Shell mobile max 480px, nav bas + FAB micro",
+      "Une famille typo (Outfit), hiérarchie par poids",
+      "Accent navy ≤10 % surface ; violet AI réservé au bouton Optimiser",
+      "Cibles tactiles ≥44–48px",
+      "Ombres légères ; profondeur surtout tonale"
+    ],
+    "rules": [
+      { "name": "The One Navy Rule", "body": "Le primary navy occupe ≤10 % d’un écran.", "section": "colors" },
+      { "name": "The Sunlight Rule", "body": "Texte body et labels lisibles sur papier en lumière forte.", "section": "colors" },
+      { "name": "The One Family Rule", "body": "Outfit partout.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Shadow = état (modal, toast, dropdown).", "section": "elevation" }
+    ],
+    "dos": [
+      "Do garder les CTA primaires pleine largeur ≥48px dans le flux chantier.",
+      "Do parler métier (fiche, compte rendu, zone, Terminé).",
+      "Do montrer l’état système (enregistrement, pause, transcription, toast).",
+      "Do grouper le journal par client avant les CR."
+    ],
+    "donts": [
+      "Don't faire des dashboards SaaS “hero metrics”.",
+      "Don't adopter l’esthétique AI purple / glow / glassmorphism hors Optimiser.",
+      "Don't basculer en landing crème + serif éditorial.",
+      "Don't cloner WhatsApp / messagerie comme coquille UX.",
+      "Don't empiler une densité type ERP.",
+      "Don't utiliser une border-left accent >1px comme stripe.",
+      "Don't partager des URLs blob: comme liens PDF."
+    ]
+  }
+}

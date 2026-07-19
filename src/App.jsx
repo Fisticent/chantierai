@@ -166,6 +166,7 @@ function App() {
 
   const [toastMessage, setToastMessage] = useState('');
   const toastTimerRef = useRef(null);
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
 
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -486,6 +487,7 @@ function App() {
       }
     }
     stopWaveform();
+    setDiscardConfirmOpen(false);
     setInterventionModalOpen(false);
     setIsRecording(false);
     setIsPaused(false);
@@ -497,7 +499,8 @@ function App() {
     !!(draft.description.trim() || (draft.photos && draft.photos.length) || isRecording || isPaused);
 
   const closeInterventionModal = () => {
-    if (isDraftDirty() && !window.confirm('Abandonner cette fiche ? Les modifications non enregistrées seront perdues.')) {
+    if (isDraftDirty()) {
+      setDiscardConfirmOpen(true);
       return;
     }
     forceCloseInterventionModal();
@@ -1575,18 +1578,22 @@ Texte dicté :
 
       {/* ═══════════════ BOTTOM NAV ═══════════════ */}
       <nav className="bottom-nav">
-        <button className={`nav-btn ${tab === 'journal' ? 'active' : ''}`} onClick={() => goTab('journal')}>
-          <Home size={21} /><span>Journal</span>
-        </button>
-        <button className={`nav-btn ${tab === 'clients' ? 'active' : ''}`} onClick={() => goTab('clients')}>
-          <Users size={21} /><span>Clients</span>
-        </button>
+        <div className="nav-side">
+          <button className={`nav-btn ${tab === 'journal' ? 'active' : ''}`} onClick={() => goTab('journal')}>
+            <Home size={21} /><span>Journal</span>
+          </button>
+          <button className={`nav-btn ${tab === 'clients' ? 'active' : ''}`} onClick={() => goTab('clients')}>
+            <Users size={21} /><span>Clients</span>
+          </button>
+        </div>
         <button className={`nav-mic-btn ${isRecording ? 'recording' : ''}`} onClick={openQuickDictation} aria-label="Dicter une nouvelle intervention">
           {isRecording ? <MicOff size={24} /> : <Mic size={24} />}
         </button>
-        <button className={`nav-btn ${tab === 'profil' || tab === 'guide' ? 'active' : ''}`} onClick={() => goTab('profil')}>
-          <User size={21} /><span>Profil</span>
-        </button>
+        <div className="nav-side">
+          <button className={`nav-btn ${tab === 'profil' || tab === 'guide' ? 'active' : ''}`} onClick={() => goTab('profil')}>
+            <User size={21} /><span>Profil</span>
+          </button>
+        </div>
       </nav>
 
       {/* ═══════════════ MODAL: NEW/EDIT INTERVENTION ═══════════════ */}
@@ -1889,6 +1896,46 @@ Texte dicté :
           </div>
         );
       })()}
+
+      {/* ═══════════════ CONFIRM: abandon fiche ═══════════════ */}
+      {discardConfirmOpen && (
+        <div
+          className="dialog-backdrop centered confirm"
+          onClick={() => setDiscardConfirmOpen(false)}
+        >
+          <div
+            className="dialog confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="discard-title"
+            aria-describedby="discard-desc"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="dialog-title" id="discard-title">Abandonner cette fiche ?</div>
+            <p className="confirm-dialog-body" id="discard-desc">
+              Les modifications non enregistrées seront perdues.
+            </p>
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ flex: 1, minHeight: 48 }}
+                onClick={() => setDiscardConfirmOpen(false)}
+              >
+                Continuer
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                style={{ flex: 1, minHeight: 48 }}
+                onClick={forceCloseInterventionModal}
+              >
+                Abandonner
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══════════════ TOAST ═══════════════ */}
       {toastMessage && <div className="toast">{toastMessage}</div>}

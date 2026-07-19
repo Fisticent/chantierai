@@ -278,6 +278,15 @@ button, input, textarea, select {
   color: #ffffff;
 }
 
+.btn-danger {
+  background: var(--color-error);
+  color: #ffffff;
+}
+
+.btn-danger:hover {
+  filter: brightness(0.92);
+}
+
 .btn-ai:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -1024,6 +1033,14 @@ button, input, textarea, select {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
+/* Equal-width flanks keep the mic CTA optically centered with 3 tabs. */
+.nav-side {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .nav-btn {
   flex: 1;
   display: flex;
@@ -1133,6 +1150,21 @@ button, input, textarea, select {
 .dialog-actions {
   display: flex;
   gap: 8px;
+}
+
+.dialog-backdrop.confirm {
+  z-index: 120;
+}
+
+.confirm-dialog {
+  gap: 12px;
+}
+
+.confirm-dialog-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--color-neutral-700);
 }
 
 /* ═══════════════ Photo picker ═══════════════ */

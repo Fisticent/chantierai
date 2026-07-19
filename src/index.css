@@ -1033,14 +1033,6 @@ button, input, textarea, select {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Equal-width flanks keep the mic CTA optically centered with 3 tabs. */
-.nav-side {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
 .nav-btn {
   flex: 1;
   display: flex;

@@ -1543,23 +1543,12 @@ Texte dicté :
             <button className="btn btn-primary btn-block" onClick={saveArtisan} style={{ minHeight: 50, marginTop: 20 }}>
               {artisanSaved ? 'Enregistré ✓' : 'Enregistrer le profil'}
             </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-block"
-              style={{ minHeight: 48, marginTop: 12 }}
-              onClick={() => goTab('guide')}
-            >
-              <BookOpen size={16} /> Guide & aide
-            </button>
           </div>
         )}
 
         {/* ---------- TAB: GUIDE ---------- */}
         {tab === 'guide' && (
           <div className="guide-list">
-            <button type="button" className="text-link-btn" onClick={() => goTab('profil')} style={{ marginBottom: 8, alignSelf: 'flex-start' }}>
-              ← Retour au profil
-            </button>
             <div className="guide-row">
               <div className="guide-row-head"><Mic size={22} color="var(--color-accent)" /><h4>Dictée vocale</h4></div>
               <p>Appuie sur Dicter pour démarrer, Pause si tu es interrompu, puis Arrêter pour lancer la transcription. Tu peux prendre des photos pendant l'enregistrement.</p>
@@ -1578,22 +1567,21 @@ Texte dicté :
 
       {/* ═══════════════ BOTTOM NAV ═══════════════ */}
       <nav className="bottom-nav">
-        <div className="nav-side">
-          <button className={`nav-btn ${tab === 'journal' ? 'active' : ''}`} onClick={() => goTab('journal')}>
-            <Home size={21} /><span>Journal</span>
-          </button>
-          <button className={`nav-btn ${tab === 'clients' ? 'active' : ''}`} onClick={() => goTab('clients')}>
-            <Users size={21} /><span>Clients</span>
-          </button>
-        </div>
+        <button className={`nav-btn ${tab === 'journal' ? 'active' : ''}`} onClick={() => goTab('journal')}>
+          <Home size={21} /><span>Journal</span>
+        </button>
+        <button className={`nav-btn ${tab === 'clients' ? 'active' : ''}`} onClick={() => goTab('clients')}>
+          <Users size={21} /><span>Clients</span>
+        </button>
         <button className={`nav-mic-btn ${isRecording ? 'recording' : ''}`} onClick={openQuickDictation} aria-label="Dicter une nouvelle intervention">
           {isRecording ? <MicOff size={24} /> : <Mic size={24} />}
         </button>
-        <div className="nav-side">
-          <button className={`nav-btn ${tab === 'profil' || tab === 'guide' ? 'active' : ''}`} onClick={() => goTab('profil')}>
-            <User size={21} /><span>Profil</span>
-          </button>
-        </div>
+        <button className={`nav-btn ${tab === 'guide' ? 'active' : ''}`} onClick={() => goTab('guide')}>
+          <BookOpen size={21} /><span>Guide</span>
+        </button>
+        <button className={`nav-btn ${tab === 'profil' ? 'active' : ''}`} onClick={() => goTab('profil')}>
+          <User size={21} /><span>Profil</span>
+        </button>
       </nav>
 
       {/* ═══════════════ MODAL: NEW/EDIT INTERVENTION ═══════════════ */}

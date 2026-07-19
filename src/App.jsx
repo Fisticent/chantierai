@@ -274,16 +274,21 @@ function App() {
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [clientPickerOpen]);
 
-  // Auto-expand every client group that has at least one CR "en cours" (once per session load on journal).
+  // À l'arrivée sur le journal : seul le 1er groupe (plus récent) est ouvert.
   useEffect(() => {
     if (tab !== 'journal' || !dataLoaded) return;
     if (journalAutoExpandedRef.current) return;
-    const pendingIds = interventions
-      .filter((i) => i.status === 'encours')
-      .map((i) => i.clientId || '__orphan__');
-    if (pendingIds.length === 0) return;
+    if (interventions.length === 0) return;
     journalAutoExpandedRef.current = true;
-    setExpandedJournalClients(new Set(pendingIds));
+    const map = new Map();
+    interventions.forEach((it) => {
+      const key = it.clientId || '__orphan__';
+      const prev = map.get(key);
+      if (!prev || new Date(it.date) > new Date(prev)) map.set(key, it.date);
+    });
+    const firstId = [...map.entries()]
+      .sort((a, b) => new Date(b[1]) - new Date(a[1]))[0]?.[0];
+    if (firstId) setExpandedJournalClients(new Set([firstId]));
   }, [tab, dataLoaded, interventions]);
 
   const toggleJournalClient = (clientId) => {

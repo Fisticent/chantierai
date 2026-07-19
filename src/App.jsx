@@ -417,11 +417,15 @@ function App() {
   };
 
   const deleteClientDraft = () => {
-    setConfirmDialog({ kind: 'deleteClient' });
+    if (!clientDraft.id) return;
+    setConfirmDialog({ kind: 'deleteClient', id: clientDraft.id });
   };
 
-  const performDeleteClient = () => {
-    setClients((prev) => prev.filter((c) => c.id !== clientDraft.id));
+  const performDeleteClient = (id) => {
+    const clientId = id || clientDraft.id;
+    if (!clientId) return;
+    setClients((prev) => prev.filter((c) => c.id !== clientId));
+    setConfirmDialog(null);
     setClientModalOpen(false);
     showToast('Client supprimé');
   };
@@ -1822,7 +1826,7 @@ Texte dicté :
 
             <div className="dialog-actions" style={{ justifyContent: 'space-between' }}>
               {clientDraft.id ? (
-                <button className="text-link-btn danger" onClick={deleteClientDraft}>Supprimer</button>
+                <button type="button" className="text-link-btn danger" onClick={deleteClientDraft}>Supprimer</button>
               ) : <span />}
               <button className="btn btn-primary" onClick={saveClientDraft} disabled={!clientDraft.name.trim()} style={{ minHeight: 44 }}>
                 <Check size={16} /> Enregistrer
@@ -1926,7 +1930,7 @@ Texte dicté :
           setConfirmDialog(null);
           if (kind === 'discard') forceCloseInterventionModal();
           else if (kind === 'deleteIntervention') performDeleteIntervention(id);
-          else if (kind === 'deleteClient') performDeleteClient();
+          else if (kind === 'deleteClient') performDeleteClient(id);
         };
 
         return (

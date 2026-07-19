@@ -1145,7 +1145,7 @@ button, input, textarea, select {
 }
 
 .dialog-backdrop.confirm {
-  z-index: 120;
+  z-index: 300;
 }
 
 .confirm-dialog {

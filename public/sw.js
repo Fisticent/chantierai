@@ -1,52 +1,71 @@
-const CACHE_NAME = 'chantierexpress-cache-v1';
-// Only precache assets guaranteed to exist post-build (public/ files copied as-is).
-// Hashed build output (/assets/*.js, /assets/*.css) is cached opportunistically by the fetch handler below.
+const CACHE_NAME = 'chantierexpress-cache-v2';
+// Precache only stable public assets. Hashed Vite bundles (/assets/*) are
+// cached opportunistically after a successful network fetch.
 const ASSETS = [
-  '/',
-  '/index.html',
   '/icon.svg',
   '/manifest.json'
 ];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS);
-    }).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.map((key) => {
-          if (key !== CACHE_NAME) {
-            return caches.delete(key);
-          }
-        })
-      );
-    }).then(() => self.clients.claim())
+    caches.keys().then((keys) =>
+      Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))
+    ).then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', (e) => {
-  if (e.request.url.includes('googleapis.com') || e.request.url.includes('groq.com') || e.request.url.includes('fonts.g')) {
+  const url = e.request.url;
+  if (url.includes('googleapis.com') || url.includes('groq.com') || url.includes('fonts.g')) {
     return;
   }
+
+  // Navigations + JS/CSS: network-first so deploys are visible immediately.
+  // Stale cache-first was keeping users on old bundles (e.g. delete without confirm).
+  const accept = e.request.headers.get('accept') || '';
+  const isNavigation = e.request.mode === 'navigate' || accept.includes('text/html');
+  const isAppShell = /\.(?:js|css)(?:$|\?)/.test(url) || url.includes('/assets/');
+
+  if (isNavigation || isAppShell) {
+    e.respondWith(
+      fetch(e.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone)).catch(() => {});
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match(e.request).then((cached) => cached || caches.match('/index.html')))
+    );
+    return;
+  }
+
   e.respondWith(
     caches.match(e.request).then((cachedResponse) => {
       if (cachedResponse) {
-        fetch(e.request).then((networkResponse) => {
-          if (networkResponse.status === 200) {
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(e.request, networkResponse);
-            });
-          }
-        }).catch(() => {});
+        fetch(e.request)
+          .then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              caches.open(CACHE_NAME).then((cache) => cache.put(e.request, networkResponse)).catch(() => {});
+            }
+          })
+          .catch(() => {});
         return cachedResponse;
       }
-      return fetch(e.request);
+      return fetch(e.request).then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200) {
+          const clone = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(e.request, clone)).catch(() => {});
+        }
+        return networkResponse;
+      });
     })
   );
 });

@@ -166,7 +166,8 @@ function App() {
 
   const [toastMessage, setToastMessage] = useState('');
   const toastTimerRef = useRef(null);
-  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false);
+  // In-app confirm: { kind: 'discard' | 'deleteIntervention' | 'deleteClient', id? }
+  const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -416,6 +417,10 @@ function App() {
   };
 
   const deleteClientDraft = () => {
+    setConfirmDialog({ kind: 'deleteClient' });
+  };
+
+  const performDeleteClient = () => {
     setClients((prev) => prev.filter((c) => c.id !== clientDraft.id));
     setClientModalOpen(false);
     showToast('Client supprimé');
@@ -490,7 +495,7 @@ function App() {
       }
     }
     stopWaveform();
-    setDiscardConfirmOpen(false);
+    setConfirmDialog(null);
     setInterventionModalOpen(false);
     setIsRecording(false);
     setIsPaused(false);
@@ -503,7 +508,7 @@ function App() {
 
   const closeInterventionModal = () => {
     if (isDraftDirty()) {
-      setDiscardConfirmOpen(true);
+      setConfirmDialog({ kind: 'discard' });
       return;
     }
     forceCloseInterventionModal();
@@ -860,7 +865,11 @@ Texte dicté :
   };
 
   const deleteIntervention = (id) => {
-    if (!confirm('Supprimer cette fiche ?')) return;
+    setCardMenuOpenId(null);
+    setConfirmDialog({ kind: 'deleteIntervention', id });
+  };
+
+  const performDeleteIntervention = (id) => {
     setInterventions((prev) => prev.filter((i) => i.id !== id));
     showToast('Fiche supprimée');
   };
@@ -1317,7 +1326,7 @@ Texte dicté :
               <button
                 type="button"
                 className="intervention-card-menu-item danger"
-                onClick={() => { setCardMenuOpenId(null); deleteIntervention(it.id); }}
+                onClick={() => deleteIntervention(it.id)}
               >
                 <Trash2 size={15} /> Supprimer
               </button>
@@ -1888,45 +1897,75 @@ Texte dicté :
         );
       })()}
 
-      {/* ═══════════════ CONFIRM: abandon fiche ═══════════════ */}
-      {discardConfirmOpen && (
-        <div
-          className="dialog-backdrop centered confirm"
-          onClick={() => setDiscardConfirmOpen(false)}
-        >
+      {/* ═══════════════ CONFIRM (in-app) ═══════════════ */}
+      {confirmDialog && (() => {
+        const copy = {
+          discard: {
+            title: 'Abandonner cette fiche ?',
+            body: 'Les modifications non enregistrées seront perdues.',
+            cancel: 'Continuer',
+            confirm: 'Abandonner',
+          },
+          deleteIntervention: {
+            title: 'Supprimer cette fiche ?',
+            body: 'Cette action est définitive — la fiche ne pourra pas être récupérée.',
+            cancel: 'Annuler',
+            confirm: 'Supprimer',
+          },
+          deleteClient: {
+            title: 'Supprimer ce client ?',
+            body: "Le client sera retiré de l'annuaire. Ses comptes rendus resteront dans le journal.",
+            cancel: 'Annuler',
+            confirm: 'Supprimer',
+          },
+        }[confirmDialog.kind];
+
+        const onConfirm = () => {
+          const kind = confirmDialog.kind;
+          const id = confirmDialog.id;
+          setConfirmDialog(null);
+          if (kind === 'discard') forceCloseInterventionModal();
+          else if (kind === 'deleteIntervention') performDeleteIntervention(id);
+          else if (kind === 'deleteClient') performDeleteClient();
+        };
+
+        return (
           <div
-            className="dialog confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="discard-title"
-            aria-describedby="discard-desc"
-            onClick={(e) => e.stopPropagation()}
+            className="dialog-backdrop centered confirm"
+            onClick={() => setConfirmDialog(null)}
           >
-            <div className="dialog-title" id="discard-title">Abandonner cette fiche ?</div>
-            <p className="confirm-dialog-body" id="discard-desc">
-              Les modifications non enregistrées seront perdues.
-            </p>
-            <div className="dialog-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ flex: 1, minHeight: 48 }}
-                onClick={() => setDiscardConfirmOpen(false)}
-              >
-                Continuer
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger"
-                style={{ flex: 1, minHeight: 48 }}
-                onClick={forceCloseInterventionModal}
-              >
-                Abandonner
-              </button>
+            <div
+              className="dialog confirm-dialog"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="confirm-title"
+              aria-describedby="confirm-desc"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="dialog-title" id="confirm-title">{copy.title}</div>
+              <p className="confirm-dialog-body" id="confirm-desc">{copy.body}</p>
+              <div className="dialog-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ flex: 1, minHeight: 48 }}
+                  onClick={() => setConfirmDialog(null)}
+                >
+                  {copy.cancel}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  style={{ flex: 1, minHeight: 48 }}
+                  onClick={onConfirm}
+                >
+                  {copy.confirm}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ═══════════════ TOAST ═══════════════ */}
       {toastMessage && <div className="toast">{toastMessage}</div>}

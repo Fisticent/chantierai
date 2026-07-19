@@ -293,10 +293,8 @@ function App() {
 
   const toggleJournalClient = (clientId) => {
     setExpandedJournalClients((prev) => {
-      const next = new Set(prev);
-      if (next.has(clientId)) next.delete(clientId);
-      else next.add(clientId);
-      return next;
+      if (prev.has(clientId)) return new Set();
+      return new Set([clientId]);
     });
   };
 

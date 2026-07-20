@@ -39,15 +39,17 @@ const REAL_TASK_EXAMPLES = [
 // besoin qu'on lui donne explicitement le registre attendu. Une phrase de contexte
 // naturelle + un exemple de phrase orale pèsent bien plus qu'une liste de mots brute,
 // car le modèle conditionne sur le style/registre des tokens précédents, pas seulement
-// sur des mots isolés.
+// sur des mots isolés. Le prompt DOIT être en français — Whisper FR/ES se confond souvent.
 const GROQ_TRANSCRIPTION_PROMPT =
-  "Compte rendu de chantier dicté à voix haute par un artisan du bâtiment qui se déplace " +
-  "pièce par pièce. Vocabulaire courant : plomberie (mitigeur, chauffe-eau, groupe de " +
-  "sécurité, siphon, VMC), électricité (tableau électrique, disjoncteur, différentiel, " +
-  "gaine), maçonnerie (chape, ragréage, linteau, crépis), menuiserie (huisserie, tapée, " +
-  "plinthe, porte à galandage), plâtrerie (placo, cloison, faux-plafond). Exemple : " +
-  "\"Dans la salle de bain, j'ai remplacé le mitigeur et vérifié l'étanchéité du receveur " +
-  "de douche. En cuisine, j'ai raccordé le nouveau chauffe-eau.\"";
+  "Transcription en français uniquement. Compte rendu de chantier dicté à voix haute " +
+  "par un artisan du bâtiment en France. Vocabulaire : plomberie (mitigeur, chauffe-eau, " +
+  "groupe de sécurité, siphon, VMC), électricité (tableau électrique, disjoncteur, " +
+  "différentiel, gaine), maçonnerie (chape, ragréage, linteau, crépis), menuiserie " +
+  "(huisserie, tapée, plinthe, porte à galandage), plâtrerie (placo, cloison, faux-plafond). " +
+  "Exemple : Dans la salle de bain, j'ai remplacé le mitigeur et vérifié l'étanchéité du " +
+  "receveur de douche. En cuisine, j'ai raccordé le nouveau chauffe-eau.";
+
+const GROQ_WHISPER_MODEL = 'whisper-large-v3'; // plus fiable que turbo pour le français (évite ES/FR confus)
 
 const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
 
@@ -523,13 +525,26 @@ function App() {
   // ---- Dictation: MediaRecorder + Groq Whisper (batch, not live) so opening the
   // camera to take a photo mid-sentence never interrupts the recording. Photos are
   // timestamped and matched to the Whisper segment spoken at that moment. ----
-  const transcribeWithGroq = async (audioBlob) => {
+  const pickRecorderMime = () => {
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    return candidates.find((t) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
+  };
+
+  const recorderFileMeta = (mime) => {
+    if (mime.includes('mp4')) return { type: mime || 'audio/mp4', name: 'dictee.mp4' };
+    if (mime.includes('ogg')) return { type: mime || 'audio/ogg', name: 'dictee.ogg' };
+    return { type: mime || 'audio/webm', name: 'dictee.webm' };
+  };
+
+  const transcribeWithGroq = async (audioBlob, mimeHint = '') => {
     if (!GROQ_API_KEY) throw new Error("Clé Groq manquante (VITE_GROQ_API_KEY dans .env).");
+    const meta = recorderFileMeta(mimeHint || audioBlob.type || '');
     const form = new FormData();
-    form.append('file', audioBlob, 'dictee.webm');
-    form.append('model', 'whisper-large-v3-turbo');
-    form.append('language', 'fr');
+    form.append('file', audioBlob, meta.name);
+    form.append('model', GROQ_WHISPER_MODEL);
+    form.append('language', 'fr'); // forcer FR — sans ça Whisper confond souvent FR et ES
     form.append('prompt', GROQ_TRANSCRIPTION_PROMPT);
+    form.append('temperature', '0');
     form.append('response_format', 'verbose_json');
     form.append('timestamp_granularities[]', 'segment');
 
@@ -543,7 +558,11 @@ function App() {
       throw new Error(err?.error?.message || 'Erreur du service de transcription Groq');
     }
     const data = await response.json();
-    return { text: data.text || '', segments: data.segments || [] };
+    const lang = (data.language || '').toLowerCase();
+    if (lang && lang !== 'fr' && lang !== 'french') {
+      console.warn('[dictée] Groq a détecté', lang, 'malgré language=fr — texte:', (data.text || '').slice(0, 120));
+    }
+    return { text: data.text || '', segments: data.segments || [], language: lang || 'fr' };
   };
 
   const buildDescriptionFromSegments = (text, segments, markers) => {
@@ -612,9 +631,17 @@ function App() {
   const startDictation = async () => {
     if (isRecording || isTranscribing) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
+        }
+      });
       micStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
+      const mimeType = pickRecorderMime();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      const usedMime = recorder.mimeType || mimeType || 'audio/webm';
       audioChunksRef.current = [];
       recordingStartTimeRef.current = Date.now();
       pausedAccumMsRef.current = 0;
@@ -629,11 +656,11 @@ function App() {
         setIsRecording(false);
         setIsPaused(false);
         pauseStartedAtRef.current = null;
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: usedMime });
         if (audioBlob.size === 0) return;
         setIsTranscribing(true);
         try {
-          const { text, segments } = await transcribeWithGroq(audioBlob);
+          const { text, segments } = await transcribeWithGroq(audioBlob, usedMime);
           const merged = buildDescriptionFromSegments(text, segments, photoMarkersRef.current);
           photoMarkersRef.current = [];
           setDraft((d) => ({ ...d, description: `${d.description}${d.description ? ' ' : ''}${merged}`.trim() }));
@@ -645,7 +672,8 @@ function App() {
         }
       };
       mediaRecorderRef.current = recorder;
-      recorder.start();
+      // timeslice: chunks réguliers → meilleur webm pour Whisper après pause/reprise
+      recorder.start(1000);
       startWaveform(stream);
       setIsRecording(true);
       setIsPaused(false);

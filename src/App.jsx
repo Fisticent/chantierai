@@ -46,12 +46,16 @@ const GROQ_WHISPER_MODEL = 'whisper-large-v3';
 
 // Faux transcript FR (pas d'ordres type "transcris en français") — style oral chantier.
 // Les termes métier sont en fin de prompt (zone réellement lue par Whisper).
+// Volontairement en style télégraphique par pièce (PAS une scène narrée du type
+// "je continue la visite, dans la cuisine j'ai fait...") : une scène cohérente est
+// justement ce que Whisper recrache sur de l'audio incertain (prompt bleed) — un
+// pense-bête haché est moins "substituable" par le modèle.
 const GROQ_TRANSCRIPTION_PROMPT =
-  "Bon, on continue la visite. Dans la cuisine j'ai ouvert le faux-plafond pour passer la gaine. " +
-  "Salle de bain : mitigeur changé, groupe de sécurité du chauffe-eau contrôlé, étanchéité du " +
-  "receveur OK. Électricité : différentiel 30 milliampères sur le tableau, trois disjoncteurs " +
-  "remplacés. Maçonnerie et placo : ragréage, plinthe, tapée de fenêtre, huisserie, porte à " +
-  "galandage, cloison, VMC, siphon, crépis, chape.";
+  "Cuisine : faux-plafond ouvert, gaine passée. Salle de bain : mitigeur changé, groupe de " +
+  "sécurité du chauffe-eau contrôlé, étanchéité du receveur OK. Électricité : différentiel " +
+  "30 milliampères sur le tableau, trois disjoncteurs remplacés. Maçonnerie et placo : " +
+  "ragréage, plinthe, tapée de fenêtre, huisserie, porte à galandage, cloison, VMC, siphon, " +
+  "crépis, chape.";
 
 // Seuils alignés sur OpenAI whisper/transcribe.py (defaults officiels)
 const WHISPER_NO_SPEECH = 0.6;
@@ -61,7 +65,7 @@ const WHISPER_COMPRESSION = 2.4;
 
 // Whisper invente souvent ces phrases sur le silence (YouTube / sous-titres).
 const WHISPER_PHANTOM_RE =
-  /\b(obrigado|inscreva|legendas?|subt[ií]tulos?|thanks?\s+for\s+watching|thank\s+you\s+for\s+watching|subscribe|amara\.org|♪+|\[music\]|m[uú]sica|www\.|http|sous-titr)/i;
+  /\b(obrigado|inscreva|legendas?|subt[ií]tulos?|thanks?\s+for\s+watching|thank\s+you\s+for\s+watching|subscribe|amara\.org|♪+|\[music\]|m[uú]sica|www\.|http|sous-titr|merci\s+d'avoir\s+regard|j'esp[eè]re\s+que\s+(vous|cette\s+vid[eé]o)|abonn(e|é)[a-z]*[\s-]vous|n'oubliez\s+pas\s+de\s+(vous\s+abonner|liker)|laiss(e|ez)\s+(un\s+commentaire|vos\s+commentaires)|activ(e|ez)\s+la\s+cloche|(nouvelle|prochaine)\s+vid[eé]o|like\s+et\s+abonne)/i;
 
 function isWhisperPhantomText(text) {
   const t = (text || '').trim();
@@ -92,8 +96,11 @@ function sanitizeWhisperResult(data) {
   const segments = filterWhisperSegments(rawSegments);
 
   if (rawSegments.length > 0) {
-    const avgNoSpeech = rawSegments.reduce((a, s) => a + (s.no_speech_prob || 0), 0) / rawSegments.length;
-    if (avgNoSpeech > 0.65 || segments.length === 0) {
+    // Pas de rejet sur la moyenne globale de no_speech_prob : une dictée avec plusieurs
+    // photos a forcément des blancs (déplacement, prise de vue) qui font monter cette
+    // moyenne sans que la parole autour soit invalide — filterWhisperSegments a déjà
+    // retiré les segments individuellement silencieux, on se fie à ce qu'il reste.
+    if (segments.length === 0) {
       return { text: '', segments: [], language: lang, rejected: true };
     }
     const text = segments.map((s) => (s.text || '').trim()).filter(Boolean).join(' ').trim();
@@ -1746,6 +1753,76 @@ Texte dicté :
             </div>
 
             <div className="field">
+              <label>Client</label>
+              <div className="client-combobox" ref={clientPickerRef}>
+                <div className="client-combobox-input-wrap">
+                  <Search size={16} className="client-combobox-search-icon" />
+                  <input
+                    className="input client-combobox-input"
+                    placeholder="Rechercher un client…"
+                    value={clientQuery}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setClientQuery(value);
+                      setClientPickerOpen(true);
+                      // Ne clear le clientId que si la saisie ne correspond plus au client sélectionné
+                      // (évite de perdre la sélection en corrigeant une lettre).
+                      if (draft.clientId) {
+                        const selected = clients.find((c) => c.id === draft.clientId);
+                        const name = (selected?.name || '').toLowerCase();
+                        const q = value.trim().toLowerCase();
+                        if (q && !name.startsWith(q) && !name.includes(q)) {
+                          setDraftField('clientId', '');
+                        }
+                      }
+                    }}
+                    onFocus={() => setClientPickerOpen(true)}
+                    autoComplete="off"
+                  />
+                </div>
+                {clientPickerOpen && (
+                  <div className="client-combobox-dropdown">
+                    {filteredClientsForPicker.map((c) => (
+                      <button
+                        type="button"
+                        key={c.id}
+                        className={`client-combobox-option ${draft.clientId === c.id ? 'selected' : ''}`}
+                        onClick={() => selectClientForDraft(c)}
+                      >
+                        <span className="client-combobox-option-name">{c.name}</span>
+                        {(c.company || c.phone) && (
+                          <span className="client-combobox-option-sub">{[c.company, c.phone].filter(Boolean).join(' · ')}</span>
+                        )}
+                      </button>
+                    ))}
+                    {filteredClientsForPicker.length === 0 && (
+                      <div className="client-combobox-empty">Aucun client trouvé</div>
+                    )}
+                    <button
+                      type="button"
+                      className="client-combobox-option new"
+                      onClick={() => { setClientPickerOpen(false); openNewClient(); }}
+                    >
+                      <Plus size={15} /> Nouveau client
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Statut</label>
+              <div className="seg">
+                <label className={`seg-opt ${draft.status === 'encours' ? 'active' : ''}`}>
+                  <input type="radio" name="status" checked={draft.status === 'encours'} onChange={() => setDraftField('status', 'encours')} />En cours
+                </label>
+                <label className={`seg-opt ${draft.status === 'termine' ? 'active' : ''}`}>
+                  <input type="radio" name="status" checked={draft.status === 'termine'} onChange={() => setDraftField('status', 'termine')} />Terminé
+                </label>
+              </div>
+            </div>
+
+            <div className="field">
               <label>Description de l'intervention</label>
               <textarea
                 className="input" style={{ minHeight: 130 }}
@@ -1816,76 +1893,6 @@ Texte dicté :
                   <Images size={20} />
                   <span className="photo-add-label">Galerie</span>
                   <input type="file" accept="image/*" multiple onChange={onPhotosChange} style={{ display: 'none' }} />
-                </label>
-              </div>
-            </div>
-
-            <div className="field">
-              <label>Client</label>
-              <div className="client-combobox" ref={clientPickerRef}>
-                <div className="client-combobox-input-wrap">
-                  <Search size={16} className="client-combobox-search-icon" />
-                  <input
-                    className="input client-combobox-input"
-                    placeholder="Rechercher un client…"
-                    value={clientQuery}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setClientQuery(value);
-                      setClientPickerOpen(true);
-                      // Ne clear le clientId que si la saisie ne correspond plus au client sélectionné
-                      // (évite de perdre la sélection en corrigeant une lettre).
-                      if (draft.clientId) {
-                        const selected = clients.find((c) => c.id === draft.clientId);
-                        const name = (selected?.name || '').toLowerCase();
-                        const q = value.trim().toLowerCase();
-                        if (q && !name.startsWith(q) && !name.includes(q)) {
-                          setDraftField('clientId', '');
-                        }
-                      }
-                    }}
-                    onFocus={() => setClientPickerOpen(true)}
-                    autoComplete="off"
-                  />
-                </div>
-                {clientPickerOpen && (
-                  <div className="client-combobox-dropdown">
-                    {filteredClientsForPicker.map((c) => (
-                      <button
-                        type="button"
-                        key={c.id}
-                        className={`client-combobox-option ${draft.clientId === c.id ? 'selected' : ''}`}
-                        onClick={() => selectClientForDraft(c)}
-                      >
-                        <span className="client-combobox-option-name">{c.name}</span>
-                        {(c.company || c.phone) && (
-                          <span className="client-combobox-option-sub">{[c.company, c.phone].filter(Boolean).join(' · ')}</span>
-                        )}
-                      </button>
-                    ))}
-                    {filteredClientsForPicker.length === 0 && (
-                      <div className="client-combobox-empty">Aucun client trouvé</div>
-                    )}
-                    <button
-                      type="button"
-                      className="client-combobox-option new"
-                      onClick={() => { setClientPickerOpen(false); openNewClient(); }}
-                    >
-                      <Plus size={15} /> Nouveau client
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="field">
-              <label>Statut</label>
-              <div className="seg">
-                <label className={`seg-opt ${draft.status === 'encours' ? 'active' : ''}`}>
-                  <input type="radio" name="status" checked={draft.status === 'encours'} onChange={() => setDraftField('status', 'encours')} />En cours
-                </label>
-                <label className={`seg-opt ${draft.status === 'termine' ? 'active' : ''}`}>
-                  <input type="radio" name="status" checked={draft.status === 'termine'} onChange={() => setDraftField('status', 'termine')} />Terminé
                 </label>
               </div>
             </div>

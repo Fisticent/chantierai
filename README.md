@@ -23,7 +23,7 @@ pièce en quelques secondes — même hors-ligne.
 ## Stack technique
 
 - React 19 + Vite
-- [Groq](https://console.groq.com/) (Whisper `whisper-large-v3-turbo`) pour la transcription vocale
+- [Groq](https://console.groq.com/) (Whisper `whisper-large-v3`) pour la transcription vocale
 - [Google Gemini](https://aistudio.google.com/) (`gemini-3.1-flash-lite`) pour la structuration du texte
 - `jsPDF` pour la génération du rapport
 - `localforage` (IndexedDB) pour le stockage local

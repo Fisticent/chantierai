@@ -35,23 +35,94 @@ const REAL_TASK_EXAMPLES = [
   "Remplacer le groupe de sécurité et purger le ballon d'eau chaude",
 ].join(' / ');
 
-// Whisper (contrairement à un LLM comme Gemini) n'a pas de connaissance du monde : il a
-// besoin qu'on lui donne explicitement le registre attendu. Une phrase de contexte
-// naturelle + un exemple de phrase orale pèsent bien plus qu'une liste de mots brute,
-// car le modèle conditionne sur le style/registre des tokens précédents, pas seulement
-// sur des mots isolés. Le prompt DOIT être en français — Whisper FR/ES se confond souvent.
-const GROQ_TRANSCRIPTION_PROMPT =
-  "Transcription en français uniquement. Compte rendu de chantier dicté à voix haute " +
-  "par un artisan du bâtiment en France. Vocabulaire : plomberie (mitigeur, chauffe-eau, " +
-  "groupe de sécurité, siphon, VMC), électricité (tableau électrique, disjoncteur, " +
-  "différentiel, gaine), maçonnerie (chape, ragréage, linteau, crépis), menuiserie " +
-  "(huisserie, tapée, plinthe, porte à galandage), plâtrerie (placo, cloison, faux-plafond). " +
-  "Exemple : Dans la salle de bain, j'ai remplacé le mitigeur et vérifié l'étanchéité du " +
-  "receveur de douche. En cuisine, j'ai raccordé le nouveau chauffe-eau.";
+// ---- Groq Whisper tuning (docs Groq + OpenAI Whisper prompting guide) ----
+// - language=fr + temperature=0 : forcément (améliore accuracy + latence)
+// - model whisper-large-v3 : mieux que turbo pour FR bruyant / jargon
+// - prompt ≠ instruction ChatGPT : c'est un faux transcript précédent (style à imiter).
+//   Whisper ne lit que les ~224 derniers tokens → vocab + exemple à la FIN.
+// - verbose_json : filtrer no_speech_prob / avg_logprob / compression_ratio (hallucinations silence)
+// - VAD client : ne pas appeler l'API sur du silence (Whisper invente du PT/ES/EN sinon)
+const GROQ_WHISPER_MODEL = 'whisper-large-v3';
 
-const GROQ_WHISPER_MODEL = 'whisper-large-v3'; // plus fiable que turbo pour le français (évite ES/FR confus)
+// Faux transcript FR (pas d'ordres type "transcris en français") — style oral chantier.
+// Les termes métier sont en fin de prompt (zone réellement lue par Whisper).
+const GROQ_TRANSCRIPTION_PROMPT =
+  "Bon, on continue la visite. Dans la cuisine j'ai ouvert le faux-plafond pour passer la gaine. " +
+  "Salle de bain : mitigeur changé, groupe de sécurité du chauffe-eau contrôlé, étanchéité du " +
+  "receveur OK. Électricité : différentiel 30 milliampères sur le tableau, trois disjoncteurs " +
+  "remplacés. Maçonnerie et placo : ragréage, plinthe, tapée de fenêtre, huisserie, porte à " +
+  "galandage, cloison, VMC, siphon, crépis, chape.";
+
+// Seuils alignés sur OpenAI whisper/transcribe.py (defaults officiels)
+const WHISPER_NO_SPEECH = 0.6;
+const WHISPER_NO_SPEECH_HARD = 0.9;
+const WHISPER_LOGPROB = -1.0;
+const WHISPER_COMPRESSION = 2.4;
+
+// Whisper invente souvent ces phrases sur le silence (YouTube / sous-titres).
+const WHISPER_PHANTOM_RE =
+  /\b(obrigado|inscreva|legendas?|subt[ií]tulos?|thanks?\s+for\s+watching|thank\s+you\s+for\s+watching|subscribe|amara\.org|♪+|\[music\]|m[uú]sica|www\.|http|sous-titr)/i;
+
+function isWhisperPhantomText(text) {
+  const t = (text || '').trim();
+  if (!t) return true;
+  if (t.length < 2) return true;
+  return WHISPER_PHANTOM_RE.test(t);
+}
+
+function filterWhisperSegments(segments) {
+  return (segments || []).filter((seg) => {
+    const text = (seg.text || '').trim();
+    if (!text || isWhisperPhantomText(text)) return false;
+    const noSpeech = typeof seg.no_speech_prob === 'number' ? seg.no_speech_prob : 0;
+    const logprob = typeof seg.avg_logprob === 'number' ? seg.avg_logprob : 0;
+    const ratio = typeof seg.compression_ratio === 'number' ? seg.compression_ratio : 1;
+    if (noSpeech >= WHISPER_NO_SPEECH_HARD) return false;
+    // Règle OpenAI : silence si no_speech élevé ET logprob faible (un logprob faible seul
+    // est souvent du jargon métier mal reconnu, pas une hallucination — on ne le rejette pas).
+    if (noSpeech > WHISPER_NO_SPEECH && logprob < WHISPER_LOGPROB) return false;
+    if (ratio > WHISPER_COMPRESSION) return false;
+    return true;
+  });
+}
+
+function sanitizeWhisperResult(data) {
+  const lang = (data.language || '').toLowerCase() || 'fr';
+  const rawSegments = data.segments || [];
+  const segments = filterWhisperSegments(rawSegments);
+
+  if (rawSegments.length > 0) {
+    const avgNoSpeech = rawSegments.reduce((a, s) => a + (s.no_speech_prob || 0), 0) / rawSegments.length;
+    if (avgNoSpeech > 0.65 || segments.length === 0) {
+      return { text: '', segments: [], language: lang, rejected: true };
+    }
+    const text = segments.map((s) => (s.text || '').trim()).filter(Boolean).join(' ').trim();
+    if (!text || isWhisperPhantomText(text)) {
+      return { text: '', segments: [], language: lang, rejected: true };
+    }
+    return { text, segments, language: lang, rejected: false };
+  }
+
+  const text = (data.text || '').trim();
+  if (!text || isWhisperPhantomText(text)) {
+    return { text: '', segments: [], language: lang, rejected: true };
+  }
+  return { text, segments: [], language: lang, rejected: false };
+}
 
 const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
+
+/** Prompt Whisper = style + (fin) extrait de la dictée déjà saisie pour enchaîner. */
+function buildWhisperPrompt(priorDescription = '') {
+  const prior = (priorDescription || '')
+    .replace(PHOTO_MARKER_REGEX, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!prior) return GROQ_TRANSCRIPTION_PROMPT;
+  // Prior en FIN de prompt → dans les 224 derniers tokens (zone lue par Whisper)
+  const clipped = prior.slice(-350);
+  return `${GROQ_TRANSCRIPTION_PROMPT} ${clipped}`;
+}
 
 function loadPersisted(key, fallback) {
   return localforage.getItem(key).then((v) => (v === null || v === undefined ? fallback : v));
@@ -190,6 +261,9 @@ function App() {
   const photoMarkersRef = useRef([]);
   const clientPickerRef = useRef(null);
   const micStreamRef = useRef(null);
+  // Compte les frames "voix" pendant l'enregistrement pour éviter d'appeler Whisper sur du silence.
+  const speechStatsRef = useRef({ frames: 0, voiced: 0, peak: 0 });
+  const draftDescriptionRef = useRef('');
 
   // Live waveform while recording — an AnalyserNode tapped off the same mic stream
   // MediaRecorder uses (read-only tap, never connected to the speakers).
@@ -265,6 +339,7 @@ function App() {
   useEffect(() => { if (dataLoaded) localforage.setItem('clients', clients); }, [clients, dataLoaded]);
   useEffect(() => { if (dataLoaded) localforage.setItem('interventions', interventions); }, [interventions, dataLoaded]);
   useEffect(() => { if (dataLoaded) localforage.setItem('artisan', artisan); }, [artisan, dataLoaded]);
+  useEffect(() => { draftDescriptionRef.current = draft.description || ''; }, [draft.description]);
 
   useEffect(() => {
     if (!clientPickerOpen) return;
@@ -536,14 +611,14 @@ function App() {
     return { type: mime || 'audio/webm', name: 'dictee.webm' };
   };
 
-  const transcribeWithGroq = async (audioBlob, mimeHint = '') => {
+  const transcribeWithGroq = async (audioBlob, mimeHint = '', priorDescription = '') => {
     if (!GROQ_API_KEY) throw new Error("Clé Groq manquante (VITE_GROQ_API_KEY dans .env).");
     const meta = recorderFileMeta(mimeHint || audioBlob.type || '');
     const form = new FormData();
     form.append('file', audioBlob, meta.name);
     form.append('model', GROQ_WHISPER_MODEL);
-    form.append('language', 'fr'); // forcer FR — sans ça Whisper confond souvent FR et ES
-    form.append('prompt', GROQ_TRANSCRIPTION_PROMPT);
+    form.append('language', 'fr'); // forcer FR — accuracy + latence (docs Groq)
+    form.append('prompt', buildWhisperPrompt(priorDescription));
     form.append('temperature', '0');
     form.append('response_format', 'verbose_json');
     form.append('timestamp_granularities[]', 'segment');
@@ -558,11 +633,17 @@ function App() {
       throw new Error(err?.error?.message || 'Erreur du service de transcription Groq');
     }
     const data = await response.json();
-    const lang = (data.language || '').toLowerCase();
-    if (lang && lang !== 'fr' && lang !== 'french') {
-      console.warn('[dictée] Groq a détecté', lang, 'malgré language=fr — texte:', (data.text || '').slice(0, 120));
+    const cleaned = sanitizeWhisperResult(data);
+    if (cleaned.language && cleaned.language !== 'fr' && cleaned.language !== 'french') {
+      console.warn('[dictée] Groq a détecté', cleaned.language, 'malgré language=fr — texte:', cleaned.text.slice(0, 120));
     }
-    return { text: data.text || '', segments: data.segments || [], language: lang || 'fr' };
+    return cleaned;
+  };
+
+  const recordingHadSpeech = () => {
+    const { frames, voiced, peak } = speechStatsRef.current;
+    if (frames < 8) return true; // trop court pour juger → laisser Whisper décider
+    return voiced / frames >= 0.04 || peak >= 0.28;
   };
 
   const buildDescriptionFromSegments = (text, segments, markers) => {
@@ -616,6 +697,10 @@ function App() {
         const avg = slice.reduce((a, b) => a + b, 0) / (slice.length || 1);
         return Math.min(1, avg / 150);
       });
+      const framePeak = Math.max(...levels, 0);
+      speechStatsRef.current.frames += 1;
+      speechStatsRef.current.peak = Math.max(speechStatsRef.current.peak, framePeak);
+      if (framePeak >= 0.18) speechStatsRef.current.voiced += 1;
       setWaveLevels(levels);
       waveRafRef.current = requestAnimationFrame(tick);
     };
@@ -646,6 +731,7 @@ function App() {
       recordingStartTimeRef.current = Date.now();
       pausedAccumMsRef.current = 0;
       pauseStartedAtRef.current = null;
+      speechStatsRef.current = { frames: 0, voiced: 0, peak: 0 };
       recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       recorder.onstop = async () => {
         if (micStreamRef.current) {
@@ -657,12 +743,31 @@ function App() {
         setIsPaused(false);
         pauseStartedAtRef.current = null;
         const audioBlob = new Blob(audioChunksRef.current, { type: usedMime });
-        if (audioBlob.size === 0) return;
+        if (audioBlob.size < 800) {
+          showToast('Rien entendu — redicte un peu plus longtemps.');
+          return;
+        }
+        if (!recordingHadSpeech()) {
+          showToast('Rien entendu — parle plus près du micro ou redicte.');
+          return;
+        }
         setIsTranscribing(true);
         try {
-          const { text, segments } = await transcribeWithGroq(audioBlob, usedMime);
+          const { text, segments, rejected } = await transcribeWithGroq(
+            audioBlob,
+            usedMime,
+            draftDescriptionRef.current
+          );
+          if (rejected || !text.trim()) {
+            showToast('Rien entendu — Whisper a ignoré le silence / bruit.');
+            return;
+          }
           const merged = buildDescriptionFromSegments(text, segments, photoMarkersRef.current);
           photoMarkersRef.current = [];
+          if (!merged.trim()) {
+            showToast('Rien entendu — redicte.');
+            return;
+          }
           setDraft((d) => ({ ...d, description: `${d.description}${d.description ? ' ' : ''}${merged}`.trim() }));
         } catch (err) {
           console.error(err);

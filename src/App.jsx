@@ -49,19 +49,25 @@ const GROQ_WHISPER_MODEL = 'whisper-large-v3';
 // Volontairement en style télégraphique par pièce (PAS une scène narrée du type
 // "je continue la visite, dans la cuisine j'ai fait...") : une scène cohérente est
 // justement ce que Whisper recrache sur de l'audio incertain (prompt bleed) — un
-// pense-bête haché est moins "substituable" par le modèle.
+// pense-bête haché est moins "substituable" par le modèle. Pas de nom de pièce isolé
+// en tête (ex. "Cuisine : ...") non plus : même hors narration, un mot présent dans
+// le prompt reste plus probable en sortie quand Whisper hallucine sur du silence.
 const GROQ_TRANSCRIPTION_PROMPT =
-  "Cuisine : faux-plafond ouvert, gaine passée. Salle de bain : mitigeur changé, groupe de " +
-  "sécurité du chauffe-eau contrôlé, étanchéité du receveur OK. Électricité : différentiel " +
-  "30 milliampères sur le tableau, trois disjoncteurs remplacés. Maçonnerie et placo : " +
-  "ragréage, plinthe, tapée de fenêtre, huisserie, porte à galandage, cloison, VMC, siphon, " +
-  "crépis, chape.";
+  "Salle de bain : mitigeur changé, groupe de sécurité du chauffe-eau contrôlé, étanchéité " +
+  "du receveur OK. Électricité : différentiel 30 milliampères sur le tableau, trois " +
+  "disjoncteurs remplacés. Maçonnerie et placo : ragréage, plinthe, tapée de fenêtre, " +
+  "huisserie, porte à galandage, cloison, VMC, siphon, crépis, chape, faux-plafond, gaine.";
 
 // Seuils alignés sur OpenAI whisper/transcribe.py (defaults officiels)
 const WHISPER_NO_SPEECH = 0.6;
 const WHISPER_NO_SPEECH_HARD = 0.9;
 const WHISPER_LOGPROB = -1.0;
 const WHISPER_COMPRESSION = 2.4;
+// Un francophone rapide monte à ~4-4,5 mots/s. no_speech_prob/avg_logprob ne détectent
+// pas les hallucinations "confiantes" (texte fluide, faible no_speech, bon logprob) —
+// un débit au-delà de ce qui est humainement possible pour la durée réelle du segment
+// est un signe indépendant que le texte ne correspond pas à l'audio (ex. pause photo).
+const WHISPER_MAX_WORDS_PER_SEC = 6;
 
 // Whisper invente souvent ces phrases sur le silence (YouTube / sous-titres).
 const WHISPER_PHANTOM_RE =
@@ -86,6 +92,11 @@ function filterWhisperSegments(segments) {
     // est souvent du jargon métier mal reconnu, pas une hallucination — on ne le rejette pas).
     if (noSpeech > WHISPER_NO_SPEECH && logprob < WHISPER_LOGPROB) return false;
     if (ratio > WHISPER_COMPRESSION) return false;
+    const duration = typeof seg.start === 'number' && typeof seg.end === 'number' ? seg.end - seg.start : null;
+    if (duration && duration > 0) {
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      if (wordCount / duration > WHISPER_MAX_WORDS_PER_SEC) return false;
+    }
     return true;
   });
 }
@@ -267,6 +278,7 @@ function App() {
   const pauseStartedAtRef = useRef(null);
   const photoMarkersRef = useRef([]);
   const clientPickerRef = useRef(null);
+  const dictationFieldRef = useRef(null);
   const micStreamRef = useRef(null);
   // Compte les frames "voix" pendant l'enregistrement pour éviter d'appeler Whisper sur du silence.
   const speechStatsRef = useRef({ frames: 0, voiced: 0, peak: 0 });
@@ -556,8 +568,13 @@ function App() {
     setClientQuery('');
     setClientPickerOpen(false);
     setInterventionModalOpen(true);
-    // Dictation-first : on parle tout de suite, le client se rattache après.
-    setTimeout(() => startDictation(), 250);
+    // Dictation-first : on parle tout de suite, le client se rattache après. Client/Statut
+    // sont affichés avant la description dans la fiche, donc on scrolle jusqu'au champ pour
+    // que l'indicateur d'enregistrement reste visible sans action de l'utilisateur.
+    setTimeout(() => {
+      startDictation();
+      dictationFieldRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 250);
   };
 
   const openInterventionEdit = (id) => {
@@ -1822,7 +1839,7 @@ Texte dicté :
               </div>
             </div>
 
-            <div className="field">
+            <div className="field" ref={dictationFieldRef}>
               <label>Description de l'intervention</label>
               <textarea
                 className="input" style={{ minHeight: 130 }}

@@ -654,23 +654,11 @@ function App() {
     const remaining = [...markers].sort((a, b) => a.atMs - b.atMs);
     let result = '';
     segments.forEach((seg, idx) => {
-      const words = seg.text.trim().split(/\s+/).filter(Boolean);
-      const segStartMs = seg.start * 1000;
+      result += seg.text.trim() + ' ';
       const segEndMs = seg.end * 1000;
       const isLast = idx === segments.length - 1;
-      let wordIdx = 0;
-      // Photo prise pendant ce segment : on interpole sa position dans les mots du
-      // segment (débit de parole ~constant) au lieu de coller la balise en fin de
-      // segment entier, qui peut durer plusieurs secondes.
-      while (remaining.length > 0 && remaining[0].atMs >= segStartMs && remaining[0].atMs <= segEndMs) {
-        const marker = remaining.shift();
-        const proportion = segEndMs > segStartMs ? (marker.atMs - segStartMs) / (segEndMs - segStartMs) : 1;
-        const targetIdx = Math.min(words.length, Math.max(0, Math.round(proportion * words.length)));
-        while (wordIdx < targetIdx) result += words[wordIdx++] + ' ';
-        result += `[Photo ${marker.photoNumber}] `;
-      }
-      while (wordIdx < words.length) result += words[wordIdx++] + ' ';
-      // Photo prise pendant un blanc (avant ce segment) ou après le dernier segment.
+      // Balise après le segment entier (jamais en plein milieu d'une phrase) — un repère
+      // à l'intérieur d'une phrase perturbe la lecture et la structuration Gemini en aval.
       while (remaining.length > 0 && (isLast || remaining[0].atMs <= segEndMs)) {
         result += `[Photo ${remaining.shift().photoNumber}] `;
       }

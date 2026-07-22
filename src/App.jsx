@@ -80,22 +80,73 @@ function isWhisperPhantomText(text) {
   return WHISPER_PHANTOM_RE.test(t);
 }
 
+// Journal local (localforage, comme le reste des données de l'app) des rejets/hallucinations
+// signalés, consultable depuis l'onglet Profil — pour diagnostiquer sur les vraies métriques
+// du segment au lieu de deviner à l'aveugle sur la base d'un seul exemple rapporté après coup.
+const WHISPER_DEBUG_LOG_MAX = 40;
+function appendWhisperDebugLog(entry) {
+  localforage.getItem('whisperDebugLog')
+    .then((existing) => {
+      const next = [...(existing || []), { ...entry, at: new Date().toISOString() }].slice(-WHISPER_DEBUG_LOG_MAX);
+      return localforage.setItem('whisperDebugLog', next);
+    })
+    .catch(() => {});
+}
+
+function logWhisperRejection(seg, text, reason) {
+  console.warn('[dictée] segment rejeté —', reason, {
+    text,
+    no_speech_prob: seg.no_speech_prob,
+    avg_logprob: seg.avg_logprob,
+    compression_ratio: seg.compression_ratio,
+    start: seg.start,
+    end: seg.end
+  });
+  appendWhisperDebugLog({
+    type: 'segment',
+    reason,
+    text,
+    no_speech_prob: seg.no_speech_prob,
+    avg_logprob: seg.avg_logprob,
+    compression_ratio: seg.compression_ratio,
+    start: seg.start,
+    end: seg.end
+  });
+}
+
 function filterWhisperSegments(segments) {
   return (segments || []).filter((seg) => {
     const text = (seg.text || '').trim();
-    if (!text || isWhisperPhantomText(text)) return false;
+    if (!text) return false;
+    if (isWhisperPhantomText(text)) {
+      logWhisperRejection(seg, text, 'phrase fantôme (silence/générique)');
+      return false;
+    }
     const noSpeech = typeof seg.no_speech_prob === 'number' ? seg.no_speech_prob : 0;
     const logprob = typeof seg.avg_logprob === 'number' ? seg.avg_logprob : 0;
     const ratio = typeof seg.compression_ratio === 'number' ? seg.compression_ratio : 1;
-    if (noSpeech >= WHISPER_NO_SPEECH_HARD) return false;
+    if (noSpeech >= WHISPER_NO_SPEECH_HARD) {
+      logWhisperRejection(seg, text, `no_speech_prob ${noSpeech.toFixed(2)} >= ${WHISPER_NO_SPEECH_HARD}`);
+      return false;
+    }
     // Règle OpenAI : silence si no_speech élevé ET logprob faible (un logprob faible seul
     // est souvent du jargon métier mal reconnu, pas une hallucination — on ne le rejette pas).
-    if (noSpeech > WHISPER_NO_SPEECH && logprob < WHISPER_LOGPROB) return false;
-    if (ratio > WHISPER_COMPRESSION) return false;
+    if (noSpeech > WHISPER_NO_SPEECH && logprob < WHISPER_LOGPROB) {
+      logWhisperRejection(seg, text, `no_speech ${noSpeech.toFixed(2)} + logprob ${logprob.toFixed(2)}`);
+      return false;
+    }
+    if (ratio > WHISPER_COMPRESSION) {
+      logWhisperRejection(seg, text, `compression_ratio ${ratio.toFixed(2)} > ${WHISPER_COMPRESSION} (boucle répétitive)`);
+      return false;
+    }
     const duration = typeof seg.start === 'number' && typeof seg.end === 'number' ? seg.end - seg.start : null;
     if (duration && duration > 0) {
       const wordCount = text.split(/\s+/).filter(Boolean).length;
-      if (wordCount / duration > WHISPER_MAX_WORDS_PER_SEC) return false;
+      const rate = wordCount / duration;
+      if (rate > WHISPER_MAX_WORDS_PER_SEC) {
+        logWhisperRejection(seg, text, `débit ${rate.toFixed(1)} mots/s > ${WHISPER_MAX_WORDS_PER_SEC} (implausible)`);
+        return false;
+      }
     }
     return true;
   });
@@ -112,10 +163,14 @@ function sanitizeWhisperResult(data) {
     // moyenne sans que la parole autour soit invalide — filterWhisperSegments a déjà
     // retiré les segments individuellement silencieux, on se fie à ce qu'il reste.
     if (segments.length === 0) {
+      console.warn(`[dictée] dictée entière rejetée — ${rawSegments.length} segment(s) bruts, 0 conservé(s) après filtrage`);
+      appendWhisperDebugLog({ type: 'all', reason: 'tous les segments rejetés', rawCount: rawSegments.length });
       return { text: '', segments: [], language: lang, rejected: true };
     }
     const text = segments.map((s) => (s.text || '').trim()).filter(Boolean).join(' ').trim();
     if (!text || isWhisperPhantomText(text)) {
+      console.warn('[dictée] texte final rejeté (phrase fantôme après assemblage) —', text);
+      appendWhisperDebugLog({ type: 'all', reason: 'phrase fantôme après assemblage', text });
       return { text: '', segments: [], language: lang, rejected: true };
     }
     return { text, segments, language: lang, rejected: false };

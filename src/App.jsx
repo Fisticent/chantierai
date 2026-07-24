@@ -93,6 +93,28 @@ function appendWhisperDebugLog(entry) {
     .catch(() => {});
 }
 
+/** Fire-and-forget debug → Telegram via /api/debug-telegram (token côté serveur). */
+function reportTelegramDebug(type, summary, data) {
+  try {
+    const payload = {
+      type,
+      summary,
+      data,
+      at: new Date().toISOString(),
+      ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+    };
+    appendWhisperDebugLog({ type: `tg:${type}`, summary, data });
+    fetch('/api/debug-telegram', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* ignore */
+  }
+}
+
 function logWhisperRejection(seg, text, reason) {
   console.warn('[dictée] segment rejeté —', reason, {
     text,
@@ -911,12 +933,27 @@ function App() {
             showToast('Rien entendu — Whisper a ignoré le silence / bruit.');
             return;
           }
+          const markersSnapshot = photoMarkersRef.current.map((m) => ({ ...m }));
           const merged = buildDescriptionFromSegments(text, segments, photoMarkersRef.current);
           photoMarkersRef.current = [];
           if (!merged.trim()) {
             showToast('Rien entendu — redicte.');
             return;
           }
+          reportTelegramDebug(
+            'dictation',
+            `Dictée OK — ${markersSnapshot.length} photo(s), ${segments.length} segment(s)`,
+            {
+              markers: markersSnapshot,
+              segments: (segments || []).map((s) => ({
+                text: (s.text || '').trim(),
+                start: s.start,
+                end: s.end,
+              })),
+              whisperText: text,
+              mergedWithMarkers: merged,
+            }
+          );
           setDraft((d) => ({ ...d, description: `${d.description}${d.description ? ' ' : ''}${merged}`.trim() }));
         } catch (err) {
           console.error(err);
@@ -1059,7 +1096,8 @@ Texte dicté :
       }
       const data = await response.json();
       const parsed = JSON.parse(data.candidates[0].content.parts[0].text);
-      let zones = (parsed.zones || []).filter((z) => z.tasks && z.tasks.length > 0);
+      const zonesRaw = (parsed.zones || []).filter((z) => z.tasks && z.tasks.length > 0);
+      let zones = zonesRaw;
 
       // Dédup des refs photo (Gemini peut assigner le même N à plusieurs tâches) + orphelines
       // (photothèque hors dictée) rattachées à la dernière tâche pour le PDF / aperçu.
@@ -1072,6 +1110,21 @@ Texte dicté :
         const header = zones.length > 1 || zone.title.toLowerCase() !== 'général' ? `${zone.title.toUpperCase()}\n` : '';
         return header + zone.tasks.map((t) => `- ${t.text}`).join('\n');
       }).join('\n\n');
+
+      const photoMap = (zs) =>
+        (zs || []).flatMap((z) =>
+          (z.tasks || []).map((t) => ({ zone: z.title, task: t.text, photos: t.photos || [] }))
+        );
+      reportTelegramDebug(
+        'optimize',
+        `Optimiser — ${photoCount} photo(s), ${zones.length} zone(s)`,
+        {
+          photoCount,
+          sourceText: raw,
+          geminiRaw: photoMap(zonesRaw),
+          afterNormalize: photoMap(zones),
+        }
+      );
 
       setDraft((d) => ({ ...d, description: flattened, structuredReport: { zones } }));
       showToast('Texte optimisé');

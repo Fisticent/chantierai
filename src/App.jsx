@@ -403,15 +403,6 @@ function App() {
 
     document.documentElement.setAttribute('data-theme', 'light');
 
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        setInterventionModalOpen(false);
-        setClientModalOpen(false);
-        setPdfModalOpen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-
     const handleClickOutside = (e) => {
       if (notificationsPopoverRef.current && !notificationsPopoverRef.current.contains(e.target)) {
         setShowNotificationsPopover(false);
@@ -432,7 +423,6 @@ function App() {
     const reminderInterval = setInterval(checkDailyReminder, 60000);
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handleClickOutside);
       clearInterval(reminderInterval);
     };
@@ -703,6 +693,33 @@ function App() {
     forceCloseInterventionModal();
   };
 
+  // Escape = même chemin que la croix (confirm + coupe micro), pas un close silencieux.
+  const escapeHandlerRef = useRef(() => {});
+  escapeHandlerRef.current = () => {
+    if (confirmDialog) {
+      setConfirmDialog(null);
+      return;
+    }
+    if (interventionModalOpen) {
+      closeInterventionModal();
+      return;
+    }
+    if (pdfModalOpen) {
+      setPdfModalOpen(false);
+      return;
+    }
+    if (clientModalOpen) {
+      closeClientModal();
+    }
+  };
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') escapeHandlerRef.current();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const setDraftField = (field, value) => setDraft((d) => ({ ...d, [field]: value }));
 
   // ---- Dictation: MediaRecorder + Groq Whisper (batch, not live) so opening the
@@ -759,18 +776,40 @@ function App() {
       const trailing = markers.map((m) => `[Photo ${m.photoNumber}]`).join(' ');
       return trailing ? `${text} ${trailing}`.trim() : text;
     }
+    // Photo pendant la parole d'un segment, ou dans le silence qui suit → fin de CE segment
+    // (pas du suivant). Évite de coller [Photo N] sur la phrase d'après quand on shoot
+    // pendant la pause entre deux sujets.
     const remaining = [...markers].sort((a, b) => a.atMs - b.atMs);
+    const afterSeg = segments.map(() => []);
+    const trailing = [];
+    for (const m of remaining) {
+      let placed = false;
+      for (let i = 0; i < segments.length; i++) {
+        const start = segments[i].start * 1000;
+        const end = segments[i].end * 1000;
+        const nextStart = i + 1 < segments.length ? segments[i + 1].start * 1000 : Infinity;
+        if (m.atMs >= start && m.atMs <= end) {
+          afterSeg[i].push(m);
+          placed = true;
+          break;
+        }
+        if (m.atMs > end && m.atMs < nextStart) {
+          afterSeg[i].push(m);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        if (m.atMs < segments[0].start * 1000) afterSeg[0].push(m);
+        else trailing.push(m);
+      }
+    }
     let result = '';
     segments.forEach((seg, idx) => {
       result += seg.text.trim() + ' ';
-      const segEndMs = seg.end * 1000;
-      const isLast = idx === segments.length - 1;
-      // Balise après le segment entier (jamais en plein milieu d'une phrase) — un repère
-      // à l'intérieur d'une phrase perturbe la lecture et la structuration Gemini en aval.
-      while (remaining.length > 0 && (isLast || remaining[0].atMs <= segEndMs)) {
-        result += `[Photo ${remaining.shift().photoNumber}] `;
-      }
+      for (const m of afterSeg[idx]) result += `[Photo ${m.photoNumber}] `;
     });
+    for (const m of trailing) result += `[Photo ${m.photoNumber}] `;
     return result.trim();
   };
 

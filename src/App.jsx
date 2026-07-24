@@ -207,8 +207,9 @@ function sanitizeWhisperResult(data) {
 
 const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
 
-/** Chaque index photo 1..photoCount au plus une fois (1re tâche qui le revendique). Orphelines → dernière tâche. */
-function normalizeStructuredPhotoRefs(zones, photoCount) {
+/** Chaque index photo 1..photoCount au plus une fois (1re tâche qui le revendique).
+ *  Orphelines → dernière tâche seulement si attachOrphans=true (ex. marqueurs présents dans le texte). */
+function normalizeStructuredPhotoRefs(zones, photoCount, { attachOrphans = true } = {}) {
   if (!photoCount || !zones?.length) return zones || [];
   const seen = new Set();
   const cleaned = zones.map((zone) => ({
@@ -224,16 +225,35 @@ function normalizeStructuredPhotoRefs(zones, photoCount) {
       return { ...task, photos: uniq };
     }),
   }));
-  const orphans = [];
-  for (let i = 1; i <= photoCount; i++) {
-    if (!seen.has(i)) orphans.push(i);
-  }
-  if (orphans.length > 0) {
-    const lastZone = cleaned[cleaned.length - 1];
-    const lastTask = lastZone.tasks[lastZone.tasks.length - 1];
-    if (lastTask) lastTask.photos = [...(lastTask.photos || []), ...orphans];
+  if (attachOrphans) {
+    const orphans = [];
+    for (let i = 1; i <= photoCount; i++) {
+      if (!seen.has(i)) orphans.push(i);
+    }
+    if (orphans.length > 0) {
+      const lastZone = cleaned[cleaned.length - 1];
+      const lastTask = lastZone.tasks[lastZone.tasks.length - 1];
+      if (lastTask) lastTask.photos = [...(lastTask.photos || []), ...orphans];
+    }
   }
   return cleaned;
+}
+
+/** Remet [Photo N] dans les puces pour qu'un 2e Optimiser garde les rattachements. */
+function flattenZonesWithPhotoMarkers(zones) {
+  return (zones || []).map((zone, idx, arr) => {
+    const showHeader = arr.length > 1 || zone.title.toLowerCase() !== 'général';
+    const header = showHeader ? `${zone.title.toUpperCase()}\n` : '';
+    const lines = (zone.tasks || []).map((t) => {
+      const cleanText = (t.text || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+      const markers = (t.photos || [])
+        .filter((n) => Number.isInteger(n) && n > 0)
+        .map((n) => `[Photo ${n}]`)
+        .join(' ');
+      return markers ? `- ${cleanText} ${markers}` : `- ${cleanText}`;
+    }).join('\n');
+    return header + lines;
+  }).join('\n\n');
 }
 
 /** Prompt Whisper = style + (fin) extrait de la dictée déjà saisie pour enchaîner. */
@@ -793,14 +813,19 @@ function App() {
     return voiced / frames >= 0.04 || peak >= 0.28;
   };
 
+  // Si la photo tombe dans les NEAR_PREV_END_MS après la fin du segment précédent
+  // (déjà dans la parole du suivant), on la rattache encore au précédent — typiquement
+  // un clic "tardif" juste après un sujet. Mesure depuis prev.end, pas depuis start du
+  // chunk Whisper : une longue pause avant un nouveau sujet ne vole plus la photo.
+  const NEAR_PREV_END_MS = 1200;
+
   const buildDescriptionFromSegments = (text, segments, markers) => {
     if (!segments || segments.length === 0 || markers.length === 0) {
       const trailing = markers.map((m) => `[Photo ${m.photoNumber}]`).join(' ');
       return trailing ? `${text} ${trailing}`.trim() : text;
     }
-    // Photo pendant la parole d'un segment, ou dans le silence qui suit → fin de CE segment
-    // (pas du suivant). Évite de coller [Photo N] sur la phrase d'après quand on shoot
-    // pendant la pause entre deux sujets.
+    // Photo dans le silence après un segment → fin de CE segment.
+    // Photo en début de segment suivant mais encore ≤1200 ms après prev.end → précédent.
     const remaining = [...markers].sort((a, b) => a.atMs - b.atMs);
     const afterSeg = segments.map(() => []);
     const trailing = [];
@@ -810,8 +835,10 @@ function App() {
         const start = segments[i].start * 1000;
         const end = segments[i].end * 1000;
         const nextStart = i + 1 < segments.length ? segments[i + 1].start * 1000 : Infinity;
+        const prevEnd = i > 0 ? segments[i - 1].end * 1000 : -Infinity;
         if (m.atMs >= start && m.atMs <= end) {
-          afterSeg[i].push(m);
+          if (i > 0 && m.atMs - prevEnd <= NEAR_PREV_END_MS) afterSeg[i - 1].push(m);
+          else afterSeg[i].push(m);
           placed = true;
           break;
         }
@@ -1099,17 +1126,16 @@ Texte dicté :
       const zonesRaw = (parsed.zones || []).filter((z) => z.tasks && z.tasks.length > 0);
       let zones = zonesRaw;
 
-      // Dédup des refs photo (Gemini peut assigner le même N à plusieurs tâches) + orphelines
-      // (photothèque hors dictée) rattachées à la dernière tâche pour le PDF / aperçu.
+      // Dédup des refs. Orphelines → dernière tâche seulement si le texte source avait des [Photo N]
+      // (sinon on dumpait tout sur la cuisine au 2e Optimiser / photothèque).
       const photoCount = draft.photos.length;
+      const sourceHadMarkers = /\[Photo\s+\d+\]/i.test(raw);
       if (photoCount > 0 && zones.length > 0) {
-        zones = normalizeStructuredPhotoRefs(zones, photoCount);
+        zones = normalizeStructuredPhotoRefs(zones, photoCount, { attachOrphans: sourceHadMarkers });
       }
 
-      const flattened = zones.map((zone) => {
-        const header = zones.length > 1 || zone.title.toLowerCase() !== 'général' ? `${zone.title.toUpperCase()}\n` : '';
-        return header + zone.tasks.map((t) => `- ${t.text}`).join('\n');
-      }).join('\n\n');
+      // Réinjecte [Photo N] dans les puces pour les Optimiser suivants.
+      const flattened = flattenZonesWithPhotoMarkers(zones);
 
       const photoMap = (zs) =>
         (zs || []).flatMap((z) =>
@@ -1117,12 +1143,14 @@ Texte dicté :
         );
       reportTelegramDebug(
         'optimize',
-        `Optimiser — ${photoCount} photo(s), ${zones.length} zone(s)`,
+        `Optimiser — ${photoCount} photo(s), ${zones.length} zone(s), markersSource=${sourceHadMarkers}`,
         {
           photoCount,
+          sourceHadMarkers,
           sourceText: raw,
           geminiRaw: photoMap(zonesRaw),
           afterNormalize: photoMap(zones),
+          flattenedWithMarkers: flattened,
         }
       );
 

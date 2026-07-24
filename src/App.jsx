@@ -841,6 +841,17 @@ function App() {
   // segment précédent, on la rattache encore au précédent (clic tardif).
   const NEAR_PREV_END_MS = 1200;
 
+  /** Groq renvoie parfois des mots sans espace initial — on en réinsère un si besoin. */
+  const appendWhisperWord = (result, rawWord) => {
+    const w = rawWord || '';
+    if (!w) return result;
+    if (/^\s/.test(w)) return result + w;
+    // Ponctuation seule → collée au mot précédent
+    if (result && /^[.,;:!?'’)\]…]/.test(w)) return result + w;
+    if (result && !/\s$/.test(result)) return `${result} ${w}`;
+    return result + w;
+  };
+
   /** Placement précis : [Photo N] après le dernier mot dont end <= atMs (clic). */
   const buildDescriptionFromWords = (words, markers) => {
     if (!words?.length || !markers?.length) return null;
@@ -849,14 +860,14 @@ function App() {
     let wi = 0;
     for (const m of remaining) {
       while (wi < words.length && words[wi].end * 1000 <= m.atMs) {
-        result += words[wi].word || '';
+        result = appendWhisperWord(result, words[wi].word);
         wi += 1;
       }
       if (result && !/\s$/.test(result)) result += ' ';
       result += `[Photo ${m.photoNumber}] `;
     }
     while (wi < words.length) {
-      result += words[wi].word || '';
+      result = appendWhisperWord(result, words[wi].word);
       wi += 1;
     }
     return result.replace(/\s+/g, ' ').trim();

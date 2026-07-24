@@ -403,6 +403,8 @@ function App() {
   const pausedAccumMsRef = useRef(0);
   const pauseStartedAtRef = useRef(null);
   const photoMarkersRef = useRef([]);
+  /** Timestamp dictée au moment du clic Photo/Galerie (avant caméra / traitement). */
+  const pendingPhotoClickAtMsRef = useRef(null);
   const clientPickerRef = useRef(null);
   const dictationFieldRef = useRef(null);
   const micStreamRef = useRef(null);
@@ -655,7 +657,10 @@ function App() {
   });
 
   // ---- Intervention modal ----
-  const resetPhotoMarkers = () => { photoMarkersRef.current = []; };
+  const resetPhotoMarkers = () => {
+    photoMarkersRef.current = [];
+    pendingPhotoClickAtMsRef.current = null;
+  };
 
   const syncClientQueryFromDraft = (clientId) => {
     const c = clients.find((x) => x.id === clientId);
@@ -1165,8 +1170,20 @@ Texte dicté :
   };
 
   // ---- Photos ----
+  /** Figé le temps dictée au tap Photo/Galerie — pas après caméra / resize JPEG. */
+  const stampPhotoClickTime = () => {
+    const recorderState = mediaRecorderRef.current?.state;
+    if (recorderState === 'recording' || recorderState === 'paused') {
+      pendingPhotoClickAtMsRef.current = getRecordingElapsedMs();
+    } else {
+      pendingPhotoClickAtMsRef.current = null;
+    }
+  };
+
   const onPhotosChange = (e) => {
     const files = Array.from(e.target.files || []);
+    const clickAtMs = pendingPhotoClickAtMsRef.current;
+    pendingPhotoClickAtMsRef.current = null;
     files.forEach((file) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -1186,7 +1203,9 @@ Texte dicté :
             const photoNumber = photos.length;
             const recorderState = mediaRecorderRef.current?.state;
             if (recorderState === 'recording' || recorderState === 'paused') {
-              photoMarkersRef.current.push({ photoNumber, atMs: getRecordingElapsedMs() });
+              // Préférer le clic ; fallback si onChange sans stamp (ex. paste/OS).
+              const atMs = clickAtMs != null ? clickAtMs : getRecordingElapsedMs();
+              photoMarkersRef.current.push({ photoNumber, atMs });
             }
             return { ...d, photos };
           });
@@ -2098,12 +2117,12 @@ Texte dicté :
                     <button className="photo-thumb-remove" onClick={() => removePhoto(p.id)}><X size={11} /></button>
                   </div>
                 ))}
-                <label className="photo-add-btn" title="Prendre une photo">
+                <label className="photo-add-btn" title="Prendre une photo" onPointerDown={stampPhotoClickTime}>
                   <Camera size={20} />
                   <span className="photo-add-label">Photo</span>
                   <input type="file" accept="image/*" capture="environment" onChange={onPhotosChange} style={{ display: 'none' }} />
                 </label>
-                <label className="photo-add-btn" title="Choisir depuis la bibliothèque">
+                <label className="photo-add-btn" title="Choisir depuis la bibliothèque" onPointerDown={stampPhotoClickTime}>
                   <Images size={20} />
                   <span className="photo-add-label">Galerie</span>
                   <input type="file" accept="image/*" multiple onChange={onPhotosChange} style={{ display: 'none' }} />

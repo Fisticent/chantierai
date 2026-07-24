@@ -174,9 +174,23 @@ function filterWhisperSegments(segments) {
   });
 }
 
+/** Garde les mots dont le milieu tombe dans un segment conservé (après filtre qualité). */
+function filterWhisperWords(words, keptSegments) {
+  if (!words?.length) return [];
+  if (!keptSegments?.length) {
+    return words.filter((w) => typeof w?.end === 'number' && (w.word || '').trim());
+  }
+  return words.filter((w) => {
+    if (typeof w?.end !== 'number' || !(w.word || '').trim()) return false;
+    const mid = ((typeof w.start === 'number' ? w.start : w.end) + w.end) / 2;
+    return keptSegments.some((s) => mid >= s.start - 0.05 && mid <= s.end + 0.05);
+  });
+}
+
 function sanitizeWhisperResult(data) {
   const lang = (data.language || '').toLowerCase() || 'fr';
   const rawSegments = data.segments || [];
+  const rawWords = data.words || [];
   const segments = filterWhisperSegments(rawSegments);
 
   if (rawSegments.length > 0) {
@@ -187,22 +201,24 @@ function sanitizeWhisperResult(data) {
     if (segments.length === 0) {
       console.warn(`[dictée] dictée entière rejetée — ${rawSegments.length} segment(s) bruts, 0 conservé(s) après filtrage`);
       appendWhisperDebugLog({ type: 'all', reason: 'tous les segments rejetés', rawCount: rawSegments.length });
-      return { text: '', segments: [], language: lang, rejected: true };
+      return { text: '', segments: [], words: [], language: lang, rejected: true };
     }
     const text = segments.map((s) => (s.text || '').trim()).filter(Boolean).join(' ').trim();
     if (!text || isWhisperPhantomText(text)) {
       console.warn('[dictée] texte final rejeté (phrase fantôme après assemblage) —', text);
       appendWhisperDebugLog({ type: 'all', reason: 'phrase fantôme après assemblage', text });
-      return { text: '', segments: [], language: lang, rejected: true };
+      return { text: '', segments: [], words: [], language: lang, rejected: true };
     }
-    return { text, segments, language: lang, rejected: false };
+    const words = filterWhisperWords(rawWords, segments);
+    return { text, segments, words, language: lang, rejected: false };
   }
 
   const text = (data.text || '').trim();
   if (!text || isWhisperPhantomText(text)) {
-    return { text: '', segments: [], language: lang, rejected: true };
+    return { text: '', segments: [], words: [], language: lang, rejected: true };
   }
-  return { text, segments: [], language: lang, rejected: false };
+  const words = filterWhisperWords(rawWords, []);
+  return { text, segments: [], words, language: lang, rejected: false };
 }
 
 const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
@@ -771,7 +787,8 @@ function App() {
 
   // ---- Dictation: MediaRecorder + Groq Whisper (batch, not live) so opening the
   // camera to take a photo mid-sentence never interrupts the recording. Photos are
-  // timestamped and matched to the Whisper segment spoken at that moment. ----
+  // timestamped at tap and matched to the Whisper word spoken at that moment
+  // (fallback: segment + near_prev 1200ms). ----
   const pickRecorderMime = () => {
     const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
     return candidates.find((t) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
@@ -793,7 +810,9 @@ function App() {
     form.append('prompt', buildWhisperPrompt(priorDescription));
     form.append('temperature', '0');
     form.append('response_format', 'verbose_json');
+    // segment = texte + filtres qualité ; word = placement précis des [Photo N]
     form.append('timestamp_granularities[]', 'segment');
+    form.append('timestamp_granularities[]', 'word');
 
     const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
@@ -818,11 +837,30 @@ function App() {
     return voiced / frames >= 0.04 || peak >= 0.28;
   };
 
-  // Si la photo tombe dans les NEAR_PREV_END_MS après la fin du segment précédent
-  // (déjà dans la parole du suivant), on la rattache encore au précédent — typiquement
-  // un clic "tardif" juste après un sujet. Mesure depuis prev.end, pas depuis start du
-  // chunk Whisper : une longue pause avant un nouveau sujet ne vole plus la photo.
+  // Fallback segment : si la photo tombe dans les NEAR_PREV_END_MS après la fin du
+  // segment précédent, on la rattache encore au précédent (clic tardif).
   const NEAR_PREV_END_MS = 1200;
+
+  /** Placement précis : [Photo N] après le dernier mot dont end <= atMs (clic). */
+  const buildDescriptionFromWords = (words, markers) => {
+    if (!words?.length || !markers?.length) return null;
+    const remaining = [...markers].sort((a, b) => a.atMs - b.atMs);
+    let result = '';
+    let wi = 0;
+    for (const m of remaining) {
+      while (wi < words.length && words[wi].end * 1000 <= m.atMs) {
+        result += words[wi].word || '';
+        wi += 1;
+      }
+      if (result && !/\s$/.test(result)) result += ' ';
+      result += `[Photo ${m.photoNumber}] `;
+    }
+    while (wi < words.length) {
+      result += words[wi].word || '';
+      wi += 1;
+    }
+    return result.replace(/\s+/g, ' ').trim();
+  };
 
   const buildDescriptionFromSegments = (text, segments, markers) => {
     if (!segments || segments.length === 0 || markers.length === 0) {
@@ -865,6 +903,14 @@ function App() {
     });
     for (const m of trailing) result += `[Photo ${m.photoNumber}] `;
     return result.trim();
+  };
+
+  /** Préfère word-level ; sinon near_prev sur segments. */
+  const buildDescriptionWithPhotoMarkers = (text, segments, words, markers) => {
+    if (!markers?.length) return { text, placement: 'none' };
+    const fromWords = buildDescriptionFromWords(words, markers);
+    if (fromWords) return { text: fromWords, placement: 'word' };
+    return { text: buildDescriptionFromSegments(text, segments, markers), placement: 'segment_near_prev' };
   };
 
   const stopWaveform = () => {
@@ -956,7 +1002,7 @@ function App() {
         }
         setIsTranscribing(true);
         try {
-          const { text, segments, rejected } = await transcribeWithGroq(
+          const { text, segments, words, rejected } = await transcribeWithGroq(
             audioBlob,
             usedMime,
             draftDescriptionRef.current
@@ -966,7 +1012,12 @@ function App() {
             return;
           }
           const markersSnapshot = photoMarkersRef.current.map((m) => ({ ...m }));
-          const merged = buildDescriptionFromSegments(text, segments, photoMarkersRef.current);
+          const { text: merged, placement } = buildDescriptionWithPhotoMarkers(
+            text,
+            segments,
+            words,
+            photoMarkersRef.current
+          );
           photoMarkersRef.current = [];
           if (!merged.trim()) {
             showToast('Rien entendu — redicte.');
@@ -974,9 +1025,11 @@ function App() {
           }
           reportTelegramDebug(
             'dictation',
-            `Dictée OK — ${markersSnapshot.length} photo(s), ${segments.length} segment(s)`,
+            `Dictée OK — ${markersSnapshot.length} photo(s), ${segments.length} segment(s), ${(words || []).length} mot(s), placement=${placement}`,
             {
               markers: markersSnapshot,
+              placement,
+              wordCount: (words || []).length,
               segments: (segments || []).map((s) => ({
                 text: (s.text || '').trim(),
                 start: s.start,

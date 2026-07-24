@@ -185,6 +185,35 @@ function sanitizeWhisperResult(data) {
 
 const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
 
+/** Chaque index photo 1..photoCount au plus une fois (1re tâche qui le revendique). Orphelines → dernière tâche. */
+function normalizeStructuredPhotoRefs(zones, photoCount) {
+  if (!photoCount || !zones?.length) return zones || [];
+  const seen = new Set();
+  const cleaned = zones.map((zone) => ({
+    ...zone,
+    tasks: (zone.tasks || []).map((task) => {
+      const uniq = [];
+      for (const n of task.photos || []) {
+        if (!Number.isInteger(n) || n < 1 || n > photoCount) continue;
+        if (seen.has(n)) continue;
+        seen.add(n);
+        uniq.push(n);
+      }
+      return { ...task, photos: uniq };
+    }),
+  }));
+  const orphans = [];
+  for (let i = 1; i <= photoCount; i++) {
+    if (!seen.has(i)) orphans.push(i);
+  }
+  if (orphans.length > 0) {
+    const lastZone = cleaned[cleaned.length - 1];
+    const lastTask = lastZone.tasks[lastZone.tasks.length - 1];
+    if (lastTask) lastTask.photos = [...(lastTask.photos || []), ...orphans];
+  }
+  return cleaned;
+}
+
 /** Prompt Whisper = style + (fin) extrait de la dictée déjà saisie pour enchaîner. */
 function buildWhisperPrompt(priorDescription = '') {
   const prior = (priorDescription || '')
@@ -974,7 +1003,7 @@ Tâche :
 2. Regroupe les tâches par zone/pièce mentionnée (ex: "Salle de bain", "Cuisine", "Chambre 2"). Si aucune zone n'est identifiable, utilise une seule zone "Général".
 3. Puces courtes et factuelles, exactement le style télégraphique d'un vrai compte rendu de chantier — voici des exemples réels du registre attendu : ${REAL_TASK_EXAMPLES}. Jamais de phrases commerciales, jamais de tournures rédigées à la première personne.
 4. Pour chaque tâche, si un ou plusieurs repères "[Photo N]" étaient à proximité dans le texte source, référence leur(s) numéro(s) N dans le champ "photos" (entiers). Ne laisse jamais "[Photo N]" dans le texte de la tâche.
-5. Assigne TOUS les numéros de photo présents dans le texte (et tous les indices de 1 à ${draft.photos.length || 0} s'il y a des photos) à au moins une tâche. Aucune photo ne doit rester orpheline.
+5. Assigne TOUS les numéros de photo présents dans le texte (et tous les indices de 1 à ${draft.photos.length || 0} s'il y a des photos) à exactement une tâche. Chaque numéro apparaît AU PLUS UNE FOIS dans tout le rapport. Aucune photo ne doit rester orpheline.
 6. N'invente aucune information absente du texte source.
 
 Texte dicté :
@@ -993,21 +1022,11 @@ Texte dicté :
       const parsed = JSON.parse(data.candidates[0].content.parts[0].text);
       let zones = (parsed.zones || []).filter((z) => z.tasks && z.tasks.length > 0);
 
-      // Rattache les photos non référencées (ex. ajoutées depuis la photothèque hors dictée)
-      // à la dernière tâche, pour qu'elles apparaissent dans le PDF structuré.
+      // Dédup des refs photo (Gemini peut assigner le même N à plusieurs tâches) + orphelines
+      // (photothèque hors dictée) rattachées à la dernière tâche pour le PDF / aperçu.
       const photoCount = draft.photos.length;
       if (photoCount > 0 && zones.length > 0) {
-        const referenced = new Set();
-        zones.forEach((z) => z.tasks.forEach((t) => (t.photos || []).forEach((n) => referenced.add(n))));
-        const orphans = [];
-        for (let i = 1; i <= photoCount; i++) {
-          if (!referenced.has(i)) orphans.push(i);
-        }
-        if (orphans.length > 0) {
-          const lastZone = zones[zones.length - 1];
-          const lastTask = lastZone.tasks[lastZone.tasks.length - 1];
-          lastTask.photos = [...(lastTask.photos || []), ...orphans];
-        }
+        zones = normalizeStructuredPhotoRefs(zones, photoCount);
       }
 
       const flattened = zones.map((zone) => {
@@ -1331,19 +1350,22 @@ Texte dicté :
       y += cardH + 22;
 
       // ═══════ Content: zones/tasks or flat description ═══════
-      const referencedPhotoIdx = new Set();
+      // drawnPhotoIdx : chaque photo physique n'est dessinée qu'une fois (filet anti-doublon).
+      const drawnPhotoIdx = new Set();
       const zones = it.structuredReport?.zones?.filter((z) => z.tasks && z.tasks.length > 0);
       if (zones && zones.length > 0) {
         zones.forEach((zone) => {
           y = drawZoneHeader(y, zone.title);
           zone.tasks.forEach((task) => {
             y = drawTask(y, task.text);
-            const taskPhotos = (task.photos || [])
-              .map((n) => {
-                referencedPhotoIdx.add(n);
-                return it.photos && it.photos[n - 1];
-              })
-              .filter((p) => p && p.url && imageCache.get(p.url));
+            const taskPhotos = [];
+            for (const n of task.photos || []) {
+              if (drawnPhotoIdx.has(n)) continue;
+              const p = it.photos && it.photos[n - 1];
+              if (!p?.url || !imageCache.get(p.url)) continue;
+              drawnPhotoIdx.add(n);
+              taskPhotos.push(p);
+            }
             if (taskPhotos.length > 0) y = drawPhotoGrid(y, taskPhotos, 118);
             y += 2;
           });
@@ -1352,7 +1374,7 @@ Texte dicté :
         // Photos non référencées (photothèque hors dictée, etc.)
         const orphanPhotos = (it.photos || [])
           .map((p, idx) => ({ p, n: idx + 1 }))
-          .filter(({ p, n }) => p.url && imageCache.get(p.url) && !referencedPhotoIdx.has(n))
+          .filter(({ p, n }) => p.url && imageCache.get(p.url) && !drawnPhotoIdx.has(n))
           .map(({ p }) => p);
         if (orphanPhotos.length > 0) {
           y = drawZoneHeader(y, 'Photos');

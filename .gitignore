@@ -19,3 +19,6 @@ support.js
 .playwright/
 .playwright-cli/
 /*.png
+
+# Benches / probes locaux (ne pas committer)
+_tmp_*

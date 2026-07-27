@@ -1,36 +1,32 @@
 /**
  * POST /api/debug-telegram
- * Relays structured debug events to Telegram (server-side token).
+ * Relays structured debug events to Telegram as a downloadable JSON document
+ * (avoids the 4096-char sendMessage limit).
  *
  * Env (Vercel → Environment Variables, Production):
  *   TELEGRAM_BOT_TOKEN
  *   TELEGRAM_CHAT_ID
  */
-const MAX_LEN = 3900;
+const CAPTION_MAX = 1024;
 
-function truncate(str, max = MAX_LEN) {
+function truncate(str, max) {
   const s = String(str || '');
-  return s.length <= max ? s : `${s.slice(0, max - 20)}\n…[tronqué]`;
+  return s.length <= max ? s : `${s.slice(0, max - 12)}…[tronqué]`;
 }
 
-function formatPayload(body) {
+function buildCaption(body) {
   const type = body?.type || 'debug';
   const at = body?.at || new Date().toISOString();
-  const lines = [`🛠 ChantierExpress · ${type}`, `⏰ ${at}`];
+  const summary = body?.summary ? String(body.summary) : '';
+  return truncate(`🛠 ChantierExpress · ${type}\n⏰ ${at}${summary ? `\n\n${summary}` : ''}\n\n📎 JSON complet en pièce jointe`, CAPTION_MAX);
+}
 
-  if (body?.summary) lines.push('', String(body.summary));
-
-  if (body?.data != null) {
-    let json;
-    try {
-      json = JSON.stringify(body.data, null, 2);
-    } catch {
-      json = String(body.data);
-    }
-    lines.push('', truncate(json, MAX_LEN - 200));
+function safeJson(value) {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return JSON.stringify({ error: 'unserializable', raw: String(value) });
   }
-
-  return truncate(lines.join('\n'));
 }
 
 export default async function handler(req, res) {
@@ -68,23 +64,35 @@ export default async function handler(req, res) {
         body = { type: 'raw', data: body };
       }
     }
+    body = body || {};
 
-    const text = formatPayload(body || {});
-    const tg = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    const type = String(body.type || 'debug').replace(/[^\w.-]+/g, '_').slice(0, 40);
+    const stamp = String(body.at || new Date().toISOString()).replace(/[:.]/g, '-');
+    const filename = `chantier-${type}-${stamp}.json`;
+    const json = safeJson({
+      type: body.type || 'debug',
+      at: body.at || new Date().toISOString(),
+      summary: body.summary || '',
+      ua: body.ua || '',
+      data: body.data ?? null,
+    });
+
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    form.append('caption', buildCaption(body));
+    form.append('disable_content_type_detection', 'true');
+    form.append('document', new Blob([json], { type: 'application/json' }), filename);
+
+    const tg = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true,
-      }),
+      body: form,
     });
     const result = await tg.json().catch(() => ({}));
     if (!tg.ok || result.ok === false) {
       res.status(502).json({ error: 'Telegram API error', detail: result });
       return;
     }
-    res.status(200).json({ ok: true });
+    res.status(200).json({ ok: true, message_id: result.result?.message_id });
   } catch (err) {
     res.status(500).json({ error: err?.message || 'relay failed' });
   }

@@ -86,6 +86,15 @@ button, input, textarea, select {
   from { transform: translate(-50%, 12px); opacity: 0; }
   to { transform: translate(-50%, 0); opacity: 1; }
 }
+@keyframes toast-pop {
+  0% { transform: translate(-50%, 10px) scale(0.9); opacity: 0; }
+  60% { transform: translate(-50%, 0) scale(1.04); opacity: 1; }
+  100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+}
+@keyframes toast-check-pop {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -1230,6 +1239,150 @@ button, input, textarea, select {
   color: var(--color-accent);
 }
 
+/* ═══════════════ Rattachement photos (drag & drop) ═══════════════ */
+.photo-attach-hint {
+  margin: 0 0 8px;
+}
+
+.photo-attach-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--color-accent-100);
+  color: var(--color-accent-800);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.photo-attach {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.photo-attach-zone-title {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+  margin-bottom: 6px;
+}
+
+.photo-attach-task {
+  border: 1.5px solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  transition: var(--transition-fast);
+}
+
+.photo-attach-task:last-child {
+  margin-bottom: 0;
+}
+
+.photo-attach-task.is-over {
+  border-color: var(--color-accent);
+  background: var(--color-accent-100);
+}
+
+.photo-attach-task-text {
+  font-size: 13px;
+  line-height: 1.35;
+  margin-bottom: 6px;
+}
+
+.photo-attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 44px;
+  align-items: center;
+}
+
+.photo-attach-empty {
+  font-size: 11.5px;
+  color: var(--color-neutral-700);
+  opacity: 0.7;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.photo-attach-unattached {
+  border: 1.5px dashed var(--color-divider);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  transition: var(--transition-fast);
+}
+
+.photo-attach-unattached.is-over {
+  border-color: var(--color-accent);
+  background: var(--color-accent-100);
+}
+
+.photo-chip {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.photo-chip img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  display: block;
+}
+
+.photo-chip-num {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--color-neutral-900);
+  color: #fff;
+  font-size: 9.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--color-bg);
+}
+
+.photo-chip.is-selected img {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-200);
+}
+
+.photo-chip.is-dragging img {
+  opacity: 0.35;
+}
+
+.photo-drag-ghost {
+  position: fixed;
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--color-accent);
+  box-shadow: var(--shadow-lg);
+  transform: translate(-50%, -50%) rotate(-3deg);
+  pointer-events: none;
+  z-index: 400;
+}
+
 /* ═══════════════ Recording indicator ═══════════════ */
 .recording-indicator {
   display: flex;
@@ -1292,6 +1445,7 @@ button, input, textarea, select {
   position: fixed;
   bottom: 78px;
   left: 50%;
+  transform: translate(-50%, 0);
   max-width: calc(480px - 40px);
   background: var(--color-neutral-900);
   color: #fff;
@@ -1300,7 +1454,27 @@ button, input, textarea, select {
   font-size: 13px;
   z-index: 200;
   box-shadow: var(--shadow-lg);
+  display: flex;
+  align-items: center;
+  gap: 8px;
   animation: toast-up 0.2s ease-out;
+}
+
+.toast.success {
+  animation: toast-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.toast-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--color-success);
+  color: #fff;
+  animation: toast-check-pop 0.32s 0.05s cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
 
 /* ═══════════════ Notifications popover (kept from prior build, restyled) ═══════════════ */

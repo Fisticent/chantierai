@@ -222,6 +222,8 @@ function sanitizeWhisperResult(data) {
 }
 
 const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
+const DRAG_LONG_PRESS_MS = 200;
+const DRAG_MOVE_CANCEL_PX = 10;
 
 /** Chaque index photo 1..photoCount au plus une fois (1re tâche qui le revendique).
  *  Orphelines → dernière tâche seulement si attachOrphans=true (ex. marqueurs présents dans le texte). */
@@ -270,6 +272,45 @@ function flattenZonesWithPhotoMarkers(zones) {
     }).join('\n');
     return header + lines;
   }).join('\n\n');
+}
+
+function normalizeTaskLine(line) {
+  return line.replace(/^[-•]\s*/, '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim().toLowerCase();
+}
+
+/** Déplace [Photo N] vers la ligne de la tâche cible sans réécrire le reste du texte
+ *  (préserve les modifications manuelles faites dans le textarea après un Optimiser). */
+function moveMarkerInDescription(description, photoNumber, zones, targetZi, targetTi) {
+  const marker = `[Photo ${photoNumber}]`;
+  const stripped = (description || '').replace(new RegExp(`\\s*\\[Photo ${photoNumber}\\]`, 'g'), '');
+  if (targetZi == null) return stripped;
+
+  const targetTask = zones[targetZi]?.tasks?.[targetTi];
+  if (!targetTask) return stripped;
+
+  let globalTaskIdx = 0;
+  for (let zi = 0; zi < targetZi; zi++) globalTaskIdx += zones[zi]?.tasks?.length || 0;
+  globalTaskIdx += targetTi;
+
+  const targetNorm = normalizeTaskLine(targetTask.text || '');
+  const lines = stripped.split('\n');
+  const bulletIdxs = [];
+  lines.forEach((line, idx) => { if (/^[-•]\s/.test(line)) bulletIdxs.push(idx); });
+
+  let matchLineIdx = -1;
+  if (bulletIdxs[globalTaskIdx] != null && normalizeTaskLine(lines[bulletIdxs[globalTaskIdx]]) === targetNorm) {
+    matchLineIdx = bulletIdxs[globalTaskIdx];
+  } else {
+    matchLineIdx = bulletIdxs.find((idx) => normalizeTaskLine(lines[idx]) === targetNorm) ?? -1;
+  }
+
+  if (matchLineIdx === -1) {
+    const trimmed = stripped.replace(/\s+$/, '');
+    return trimmed ? `${trimmed} ${marker}` : marker;
+  }
+
+  lines[matchLineIdx] = `${lines[matchLineIdx].replace(/\s+$/, '')} ${marker}`;
+  return lines.join('\n');
 }
 
 /** Prompt Whisper = style + (fin) extrait de la dictée déjà saisie pour enchaîner. */
@@ -397,7 +438,7 @@ function App() {
   const [pdfDraft, setPdfDraft] = useState({ title: '', conclusion: '' });
   const [pdfGenerating, setPdfGenerating] = useState(false);
 
-  const [toastMessage, setToastMessage] = useState('');
+  const [toast, setToast] = useState(null); // { message, type: 'info' | 'success' }
   const toastTimerRef = useRef(null);
   // In-app confirm: { kind: 'discard' | 'deleteIntervention' | 'deleteClient', id? }
   const [confirmDialog, setConfirmDialog] = useState(null);
@@ -421,6 +462,10 @@ function App() {
   const photoMarkersRef = useRef([]);
   /** Timestamp dictée au moment du clic Photo/Galerie (avant caméra / traitement). */
   const pendingPhotoClickAtMsRef = useRef(null);
+  // Drag & drop de rattachement photo → tâche (voir movePhotoToTask).
+  const [photoDrag, setPhotoDrag] = useState(null); // { photoNumber, url, x, y, overKey }
+  const [selectedPhotoNum, setSelectedPhotoNum] = useState(null); // repli tap-to-move
+  const dragStartRef = useRef(null); // { photoNumber, url, x, y, pointerId, timer, moved }
   const clientPickerRef = useRef(null);
   const dictationFieldRef = useRef(null);
   const micStreamRef = useRef(null);
@@ -434,10 +479,10 @@ function App() {
   const audioContextRef = useRef(null);
   const waveRafRef = useRef(null);
 
-  const showToast = (msg) => {
-    setToastMessage(msg);
+  const showToast = (message, type = 'info') => {
+    setToast({ message, type });
     clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = setTimeout(() => setToastMessage(''), 4200);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4200);
   };
 
   // ---- Load persisted data on start (seed demo data once, on the very first launch) ----
@@ -643,7 +688,7 @@ function App() {
       }
     }
     setClientModalOpen(false);
-    showToast('Client enregistré');
+    showToast('Client enregistré', 'success');
   };
 
   const deleteClientDraft = () => {
@@ -657,7 +702,7 @@ function App() {
     setClients((prev) => prev.filter((c) => c.id !== clientId));
     setConfirmDialog(null);
     setClientModalOpen(false);
-    showToast('Client supprimé');
+    showToast('Client supprimé', 'success');
   };
 
   const selectClientForDraft = (client) => {
@@ -1224,7 +1269,7 @@ Texte dicté :
       );
 
       setDraft((d) => ({ ...d, description: flattened, structuredReport: { zones } }));
-      showToast('Texte optimisé');
+      showToast('Texte optimisé', 'success');
     } catch (err) {
       console.error(err);
       showToast(`Erreur d'optimisation : ${err.message}`);
@@ -1283,6 +1328,100 @@ Texte dicté :
 
   const removePhoto = (photoId) => setDraft((d) => ({ ...d, photos: d.photos.filter((p) => p.id !== photoId) }));
 
+  /** Déplace la photo photoNumber vers la tâche zones[targetZi].tasks[targetTi].
+   *  targetZi === null → détache la photo de toute tâche (bac "Non rattachées"). */
+  const movePhotoToTask = (photoNumber, targetZi, targetTi) => {
+    setDraft((d) => {
+      if (!d.structuredReport?.zones?.length) return d;
+      const zones = d.structuredReport.zones.map((z, zi) => ({
+        ...z,
+        tasks: (z.tasks || []).map((t, ti) => {
+          const without = (t.photos || []).filter((n) => n !== photoNumber);
+          const isTarget = targetZi != null && zi === targetZi && ti === targetTi;
+          return { ...t, photos: isTarget ? [...without, photoNumber] : without };
+        }),
+      }));
+      return {
+        ...d,
+        structuredReport: { ...d.structuredReport, zones },
+        description: moveMarkerInDescription(d.description, photoNumber, zones, targetZi, targetTi),
+      };
+    });
+  };
+
+  const applyPhotoDropKey = (photoNumber, key) => {
+    if (key === 'none') {
+      movePhotoToTask(photoNumber, null, null);
+      showToast('Photo détachée', 'success');
+      return;
+    }
+    const [zi, ti] = key.split(':').map(Number);
+    movePhotoToTask(photoNumber, zi, ti);
+    showToast('Photo déplacée', 'success');
+  };
+
+  const handlePhotoChipPointerDown = (e, photoNumber, url) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const pointerId = e.pointerId;
+    const timer = window.setTimeout(() => {
+      if (!dragStartRef.current || dragStartRef.current.pointerId !== pointerId) return;
+      dragStartRef.current.activated = true;
+      try { e.currentTarget.setPointerCapture(pointerId); } catch { /* noop */ }
+      if (navigator.vibrate) navigator.vibrate(15);
+      setPhotoDrag({ photoNumber, url, x: startX, y: startY, overKey: null });
+    }, DRAG_LONG_PRESS_MS);
+    dragStartRef.current = { photoNumber, url, x: startX, y: startY, pointerId, timer, activated: false };
+  };
+
+  const handlePhotoChipPointerMove = (e) => {
+    const start = dragStartRef.current;
+    if (!start || start.pointerId !== e.pointerId) return;
+    if (!start.activated) {
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (Math.hypot(dx, dy) > DRAG_MOVE_CANCEL_PX) {
+        window.clearTimeout(start.timer);
+        dragStartRef.current = null;
+      }
+      return;
+    }
+    const overEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-drop-key]');
+    const overKey = overEl ? overEl.getAttribute('data-drop-key') : null;
+    setPhotoDrag((pd) => (pd ? { ...pd, x: e.clientX, y: e.clientY, overKey } : pd));
+  };
+
+  const handlePhotoChipPointerUp = (e) => {
+    const start = dragStartRef.current;
+    if (!start || start.pointerId !== e.pointerId) return;
+    window.clearTimeout(start.timer);
+    dragStartRef.current = null;
+    if (start.activated) {
+      setPhotoDrag((pd) => {
+        if (pd?.overKey) applyPhotoDropKey(pd.photoNumber, pd.overKey);
+        return null;
+      });
+    } else {
+      setSelectedPhotoNum((cur) => (cur === start.photoNumber ? null : start.photoNumber));
+    }
+  };
+
+  const handlePhotoChipPointerCancel = (e) => {
+    const start = dragStartRef.current;
+    if (start && start.pointerId === e.pointerId) {
+      window.clearTimeout(start.timer);
+      dragStartRef.current = null;
+    }
+    setPhotoDrag(null);
+  };
+
+  const handlePhotoDropZoneClick = (key) => {
+    if (selectedPhotoNum == null) return;
+    applyPhotoDropKey(selectedPhotoNum, key);
+    setSelectedPhotoNum(null);
+  };
+
   // ---- Save / delete intervention ----
   const saveIntervention = () => {
     if (!draft.clientId || !draft.description.trim()) return;
@@ -1302,7 +1441,7 @@ Texte dicté :
     }
     localforage.setItem('hasCompletedCr', true);
     forceCloseInterventionModal();
-    showToast('Fiche enregistrée');
+    showToast('Fiche enregistrée', 'success');
   };
 
   const deleteIntervention = (id) => {
@@ -1312,7 +1451,7 @@ Texte dicté :
 
   const performDeleteIntervention = (id) => {
     setInterventions((prev) => prev.filter((i) => i.id !== id));
-    showToast('Fiche supprimée');
+    showToast('Fiche supprimée', 'success');
   };
 
   // ---- Artisan profile ----
@@ -1342,7 +1481,7 @@ Texte dicté :
 
   const saveArtisan = () => {
     setArtisanSaved(true);
-    showToast('Profil enregistré');
+    showToast('Profil enregistré', 'success');
     setTimeout(() => setArtisanSaved(false), 2000);
   };
 
@@ -1629,7 +1768,7 @@ Texte dicté :
         try {
           if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
             await navigator.share({ files: [pdfFile], title: title || "Rapport d'intervention", text: shareText });
-            showToast('PDF partagé');
+            showToast('PDF partagé', 'success');
             setPdfModalOpen(false);
             return;
           }
@@ -1642,13 +1781,13 @@ Texte dicté :
         doc.save(fname);
         const waUrl = 'https://api.whatsapp.com/send?text=' + encodeURIComponent(shareText);
         window.open(waUrl, '_self');
-        showToast('PDF enregistré — WhatsApp ouvert');
+        showToast('PDF enregistré — WhatsApp ouvert', 'success');
         setPdfModalOpen(false);
         return;
       }
 
       doc.save(fname);
-      showToast('PDF enregistré');
+      showToast('PDF enregistré', 'success');
       setPdfModalOpen(false);
     } finally {
       setPdfGenerating(false);
@@ -2170,6 +2309,85 @@ Texte dicté :
               <p className="form-hint sheet-tip">Optimiser regroupe ta dictée par pièce (cuisine, SDB…) pour le PDF client.</p>
             </div>
 
+            {draft.structuredReport?.zones?.length > 0 && draft.photos.length > 0 && (() => {
+              const zones = draft.structuredReport.zones;
+              const attachedNums = new Set();
+              zones.forEach((z) => (z.tasks || []).forEach((t) => (t.photos || []).forEach((n) => attachedNums.add(n))));
+              const unattached = draft.photos.map((_, idx) => idx + 1).filter((n) => !attachedNums.has(n));
+              const renderPhotoChip = (n) => {
+                const p = draft.photos[n - 1];
+                if (!p?.url) return null;
+                return (
+                  <div
+                    key={n}
+                    className={`photo-chip ${selectedPhotoNum === n ? 'is-selected' : ''} ${photoDrag?.photoNumber === n ? 'is-dragging' : ''}`}
+                    onPointerDown={(e) => handlePhotoChipPointerDown(e, n, p.url)}
+                    onPointerMove={handlePhotoChipPointerMove}
+                    onPointerUp={handlePhotoChipPointerUp}
+                    onPointerCancel={handlePhotoChipPointerCancel}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <img src={p.url} alt={`Photo ${n}`} />
+                    <span className="photo-chip-num">{n}</span>
+                  </div>
+                );
+              };
+              return (
+                <div className="field">
+                  <label>Rattachement des photos</label>
+                  <p className="form-hint photo-attach-hint">Glisse une photo sur la bonne ligne (ou touche-la, puis touche la ligne de destination).</p>
+                  {selectedPhotoNum != null && (
+                    <div className="photo-attach-select-bar">
+                      <span>Photo {selectedPhotoNum} sélectionnée — touche la ligne de destination</span>
+                      <button type="button" className="text-link-btn" onClick={() => setSelectedPhotoNum(null)}>Annuler</button>
+                    </div>
+                  )}
+                  <div className="photo-attach">
+                    {zones.map((zone, zi) => (
+                      <div key={zi} className="photo-attach-zone">
+                        <div className="photo-attach-zone-title">{zone.title}</div>
+                        {(zone.tasks || []).map((task, ti) => {
+                          const dropKey = `${zi}:${ti}`;
+                          const nums = task.photos || [];
+                          const cleanText = (task.text || '').replace(PHOTO_MARKER_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+                          return (
+                            <div
+                              key={ti}
+                              className={`photo-attach-task ${photoDrag?.overKey === dropKey ? 'is-over' : ''}`}
+                              data-drop-key={dropKey}
+                              onClick={() => handlePhotoDropZoneClick(dropKey)}
+                            >
+                              <div className="photo-attach-task-text">{cleanText}</div>
+                              <div className="photo-attach-strip">
+                                {nums.length === 0
+                                  ? <span className="photo-attach-empty">déposer une photo ici</span>
+                                  : nums.map((n) => renderPhotoChip(n))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                    {unattached.length > 0 && (
+                      <div
+                        className={`photo-attach-zone photo-attach-unattached ${photoDrag?.overKey === 'none' ? 'is-over' : ''}`}
+                        data-drop-key="none"
+                        onClick={() => handlePhotoDropZoneClick('none')}
+                      >
+                        <div className="photo-attach-zone-title">Non rattachées</div>
+                        <div className="photo-attach-strip">
+                          {unattached.map((n) => renderPhotoChip(n))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {photoDrag && (
+                    <img className="photo-drag-ghost" src={photoDrag.url} alt="" style={{ left: photoDrag.x, top: photoDrag.y }} />
+                  )}
+                </div>
+              );
+            })()}
+
             <div className="field">
               <label>Photos de chantier</label>
               <div className="photo-grid">
@@ -2412,7 +2630,14 @@ Texte dicté :
       })()}
 
       {/* ═══════════════ TOAST ═══════════════ */}
-      {toastMessage && <div className="toast">{toastMessage}</div>}
+      {toast && (
+        <div className={`toast ${toast.type === 'success' ? 'success' : ''}`}>
+          {toast.type === 'success' && (
+            <span className="toast-check"><Check size={12} strokeWidth={3} /></span>
+          )}
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }

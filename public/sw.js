@@ -1,4 +1,4 @@
-const CACHE_NAME = 'chantierexpress-cache-v3';
+const CACHE_NAME = 'chantierexpress-cache-v4';
 // Precache only stable public assets. Hashed Vite bundles (/assets/*) are
 // cached opportunistically after a successful network fetch.
 // '/' et '/index.html' sont précachés pour que le 1er lancement hors-ligne
@@ -39,8 +39,12 @@ self.addEventListener('fetch', (e) => {
   const accept = e.request.headers.get('accept') || '';
   const isNavigation = e.request.mode === 'navigate' || accept.includes('text/html');
   const isAppShell = /\.(?:js|css)(?:$|\?)/.test(url) || url.includes('/assets/');
+  // Le manifeste conditionne l'installabilité : servi en stale-while-revalidate,
+  // un ancien manifeste en cache (ex. sans icône PNG) empêche Chrome de proposer
+  // l'installation tant que le cache n'a pas tourné. Toujours réseau d'abord.
+  const isManifest = /\/manifest\.json(?:$|\?)/.test(url);
 
-  if (isNavigation || isAppShell) {
+  if (isNavigation || isAppShell || isManifest) {
     e.respondWith(
       fetch(e.request)
         .then((networkResponse) => {

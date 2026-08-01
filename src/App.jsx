@@ -1464,14 +1464,23 @@ Texte dicté :
     const startX = e.clientX;
     const startY = e.clientY;
     const pointerId = e.pointerId;
+    // React remet currentTarget à null après la propagation : il faut garder la
+    // référence maintenant, sinon setPointerCapture dans le timer échoue en silence
+    // et le doigt "perd" la photo dès qu'il sort de la vignette.
+    const el = e.currentTarget;
+    // Où dans la vignette le doigt s'est-il posé ? Le fantôme conservera ce même
+    // point sous le doigt, au lieu de se recentrer d'un coup.
+    const rect = el.getBoundingClientRect();
+    const grabDX = startX - rect.left;
+    const grabDY = startY - rect.top;
     const timer = window.setTimeout(() => {
       if (!dragStartRef.current || dragStartRef.current.pointerId !== pointerId) return;
       dragStartRef.current.activated = true;
-      try { e.currentTarget.setPointerCapture(pointerId); } catch { /* noop */ }
+      try { el.setPointerCapture(pointerId); } catch { /* noop */ }
       if (navigator.vibrate) navigator.vibrate(15);
-      setPhotoDrag({ photoNumber, url, x: startX, y: startY, overKey: null });
+      setPhotoDrag({ photoNumber, url, x: startX, y: startY, grabDX, grabDY, overKey: null });
     }, DRAG_LONG_PRESS_MS);
-    dragStartRef.current = { photoNumber, url, x: startX, y: startY, pointerId, timer, activated: false };
+    dragStartRef.current = { photoNumber, url, x: startX, y: startY, pointerId, timer, activated: false, el };
   };
 
   const handlePhotoChipPointerMove = (e) => {
@@ -1496,6 +1505,7 @@ Texte dicté :
     if (!start || start.pointerId !== e.pointerId) return;
     window.clearTimeout(start.timer);
     dragStartRef.current = null;
+    try { start.el?.releasePointerCapture(e.pointerId); } catch { /* noop */ }
     if (start.activated) {
       setPhotoDrag((pd) => {
         if (pd?.overKey) applyPhotoDropKey(pd.photoNumber, pd.overKey);
@@ -1510,6 +1520,7 @@ Texte dicté :
     const start = dragStartRef.current;
     if (start && start.pointerId === e.pointerId) {
       window.clearTimeout(start.timer);
+      try { start.el?.releasePointerCapture(e.pointerId); } catch { /* noop */ }
       dragStartRef.current = null;
     }
     setPhotoDrag(null);
@@ -2443,7 +2454,9 @@ Texte dicté :
                     onPointerCancel={handlePhotoChipPointerCancel}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <img src={p.url} alt={`Photo ${n}`} />
+                    {/* draggable=false : sinon le glisser natif d'image de Chrome démarre
+                        au 1er mouvement et annule nos pointer events (pointercancel). */}
+                    <img src={p.url} alt={`Photo ${n}`} draggable={false} />
                     <span className="photo-chip-num">{n}</span>
                   </div>
                 );
@@ -2498,7 +2511,13 @@ Texte dicté :
                     )}
                   </div>
                   {photoDrag && (
-                    <img className="photo-drag-ghost" src={photoDrag.url} alt="" style={{ left: photoDrag.x, top: photoDrag.y }} />
+                    <img
+                      className="photo-drag-ghost"
+                      src={photoDrag.url}
+                      alt=""
+                      draggable={false}
+                      style={{ left: photoDrag.x - photoDrag.grabDX, top: photoDrag.y - photoDrag.grabDY }}
+                    />
                   )}
                 </div>
               );

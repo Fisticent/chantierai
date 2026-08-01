@@ -1025,6 +1025,70 @@ button, input, textarea, select {
   margin: 0;
 }
 
+/* ═══════════════ Installation PWA ═══════════════ */
+.guide-install-actions {
+  margin-top: 12px;
+}
+
+.guide-installed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--color-success);
+}
+
+.install-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 4px 0 16px;
+}
+
+.install-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.install-step-num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.install-step-text {
+  font-size: 14px;
+  line-height: 1.45;
+  padding-top: 2px;
+}
+
+.install-step-icon {
+  vertical-align: -3px;
+  margin-right: 6px;
+  color: var(--color-accent);
+}
+
+.install-note {
+  margin: 0 0 4px;
+  padding: 10px 12px;
+  background: var(--color-accent-100);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--color-accent-800);
+}
+
 /* ═══════════════ Bottom nav ═══════════════ */
 .bottom-nav {
   position: fixed;

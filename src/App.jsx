@@ -3,8 +3,10 @@ import localforage from 'localforage';
 import {
   Mic, MicOff, Camera, Plus, Trash2, Share2, Bell, Sparkles, User, Check, X,
   FileText, Users, Edit2, BookOpen, Home, ChevronRight, ChevronDown,
-  Download, Images, Pause, Play, Search, MoreHorizontal
+  Download, Images, Pause, Play, Search, MoreHorizontal,
+  Share, MoreVertical, Smartphone, Monitor, Info
 } from 'lucide-react';
+import { getInstallPrompt, clearInstallPrompt, onInstallPromptChange } from './installPrompt.js';
 
 localforage.config({ name: 'ChantierExpress', storeName: 'interventions_store' });
 
@@ -225,6 +227,85 @@ const PHOTO_MARKER_REGEX = /\[Photo (\d+)\]/g;
 const DRAG_LONG_PRESS_MS = 200;
 const DRAG_MOVE_CANCEL_PX = 10;
 
+/** Clé de plateforme pilotant le libellé du bouton d'install et les instructions. */
+function detectInstallPlatform() {
+  if (typeof navigator === 'undefined') return 'generic';
+  const low = navigator.userAgent.toLowerCase();
+  // iPadOS 13+ se présente comme Macintosh : maxTouchPoints est le seul discriminant.
+  const isIosDevice = /iphone|ipod|ipad/.test(low)
+    || (/macintosh/.test(low) && (navigator.maxTouchPoints || 0) > 1);
+  if (isIosDevice) return /crios|fxios|edgios|opt\//.test(low) ? 'ios-other' : 'ios-safari';
+  if (/firefox|fxios/.test(low)) return /android/.test(low) ? 'android-firefox' : 'desktop-firefox';
+  if (/safari/.test(low) && !/chrome|chromium|android|edg\//.test(low)) return 'desktop-safari';
+  return 'generic';
+}
+
+function detectStandalone() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(display-mode: standalone)').matches
+    || window.matchMedia('(display-mode: minimal-ui)').matches
+    || window.matchMedia('(display-mode: window-controls-overlay)').matches
+    || window.navigator.standalone === true
+    || document.referrer.startsWith('android-app://');
+}
+
+const INSTALL_GUIDES = {
+  'ios-safari': {
+    title: 'Installer sur iPhone / iPad',
+    steps: [
+      { icon: 'share', text: "Touche le bouton Partager, en bas de l'écran Safari." },
+      { text: "Fais défiler la liste et choisis « Sur l'écran d'accueil »." },
+      { text: 'Touche « Ajouter » en haut à droite.' },
+    ],
+    note: "L'app s'ouvrira ensuite en plein écran, sans la barre d'adresse, et fonctionnera hors-ligne.",
+  },
+  'ios-other': {
+    title: 'Installer sur iPhone / iPad',
+    steps: [
+      { icon: 'share', text: 'Ouvre le menu de partage de ton navigateur.' },
+      { text: "Choisis « Sur l'écran d'accueil »." },
+      { text: 'Touche « Ajouter ».' },
+    ],
+    note: "Si l'option n'apparaît pas, ouvre cette page dans Safari : c'est le navigateur le plus fiable pour installer une app sur iPhone.",
+  },
+  'android-firefox': {
+    title: 'Installer avec Firefox',
+    steps: [
+      { icon: 'menu', text: 'Ouvre le menu ⋮ en haut à droite.' },
+      { text: "Choisis « Installer » ou « Ajouter à l'écran d'accueil »." },
+      { text: "Confirme l'ajout." },
+    ],
+  },
+  'desktop-firefox': {
+    title: "Firefox ordinateur ne permet pas l'installation",
+    steps: [
+      { icon: 'info', text: "Firefox sur ordinateur n'installe pas les applications web." },
+      { icon: 'monitor', text: 'Sur ordinateur : ouvre cette page dans Chrome ou Edge, puis reviens ici.' },
+      { icon: 'phone', text: 'Sur téléphone : Chrome (Android) ou Safari (iPhone) fonctionnent.' },
+    ],
+    note: "L'app reste parfaitement utilisable dans Firefox — seule l'icône sur le bureau n'est pas disponible.",
+  },
+  'desktop-safari': {
+    title: 'Installer avec Safari (Mac)',
+    steps: [
+      { text: 'Ouvre le menu « Fichier » dans la barre de menus.' },
+      { text: 'Choisis « Ajouter au Dock ».' },
+      { text: 'Confirme le nom, puis clique sur « Ajouter ».' },
+    ],
+    note: 'Disponible à partir de macOS Sonoma. Sur une version plus ancienne, utilise Chrome ou Edge.',
+  },
+  generic: {
+    title: "Installer l'application",
+    steps: [
+      { icon: 'menu', text: 'Ouvre le menu de ton navigateur.' },
+      { text: "Cherche « Installer l'application » ou « Ajouter à l'écran d'accueil »." },
+      { text: "Confirme l'installation." },
+    ],
+  },
+};
+
+const INSTALL_STEP_ICONS = { share: Share, menu: MoreVertical, info: Info, monitor: Monitor, phone: Smartphone };
+
 /** Chaque index photo 1..photoCount au plus une fois (1re tâche qui le revendique).
  *  Orphelines → dernière tâche seulement si attachOrphans=true (ex. marqueurs présents dans le texte). */
 function normalizeStructuredPhotoRefs(zones, photoCount, { attachOrphans = true } = {}) {
@@ -444,9 +525,10 @@ function App() {
   const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [showInstallBanner, setShowInstallBanner] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [isIos, setIsIos] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(false);
+  const [canPromptInstall, setCanPromptInstall] = useState(() => !!getInstallPrompt());
+  const [installGuideOpen, setInstallGuideOpen] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(detectStandalone);
+  const [installPlatform] = useState(detectInstallPlatform);
 
   const [notificationStatus, setNotificationStatus] = useState(
     'Notification' in window ? Notification.permission : 'default'
@@ -587,15 +669,21 @@ function App() {
 
   // ---- PWA install detection ----
   useEffect(() => {
-    const standaloneMode = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-    setIsStandalone(standaloneMode);
-    setIsIos(/iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase()));
+    // L'événement est capté dans installPrompt.js, hors React : il peut précéder ce
+    // montage, et le cleanup StrictMode d'un écouteur local le perdrait.
+    const unsubscribe = onInstallPromptChange((p) => setCanPromptInstall(!!p));
 
-    const handleInstallPrompt = (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
+    const mq = window.matchMedia('(display-mode: standalone)');
+    const syncStandalone = () => setIsStandalone(detectStandalone());
+    mq.addEventListener('change', syncStandalone);
+
+    const onInstalled = () => {
+      setIsStandalone(true);
+      setShowInstallBanner(false);
+      setInstallGuideOpen(false);
+      showToast('Application installée', 'success');
     };
-    window.addEventListener('beforeinstallprompt', handleInstallPrompt);
+    window.addEventListener('appinstalled', onInstalled);
 
     loadPersisted('visits', 0).then((v) => {
       const visits = v + 1;
@@ -604,12 +692,19 @@ function App() {
         loadPersisted('installDismissed', false),
         loadPersisted('hasCompletedCr', false),
       ]).then(([dismissed, hasCompletedCr]) => {
-        // Banner only after the artisan has produced at least one CR (value before install ask).
-        if (visits >= 3 && hasCompletedCr && !dismissed && !standaloneMode) setShowInstallBanner(true);
+        // Intention d'origine conservée (montrer la valeur avant de demander l'install),
+        // mais réellement atteignable : après un 1er CR, ou après 3 visites.
+        if (!dismissed && !detectStandalone() && (hasCompletedCr || visits >= 3)) {
+          setShowInstallBanner(true);
+        }
       });
     });
 
-    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
+    return () => {
+      unsubscribe();
+      mq.removeEventListener('change', syncStandalone);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
   }, []);
 
   const dismissInstall = () => {
@@ -618,17 +713,17 @@ function App() {
   };
 
   const installApp = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      await deferredPrompt.userChoice;
-      setDeferredPrompt(null);
-      setShowInstallBanner(false);
-    } else {
-      showToast(isIos
-        ? "Utilise le bouton de partage de Safari → « Sur l'écran d'accueil »"
-        : "Utilise le menu de ton navigateur → « Installer l'application »");
-      setShowInstallBanner(false);
+    const promptEvent = getInstallPrompt();
+    if (!promptEvent) {
+      setInstallGuideOpen(true);
+      return;
     }
+    promptEvent.prompt();
+    const { outcome } = await promptEvent.userChoice;
+    clearInstallPrompt();
+    // Refus → on NE masque PAS la bannière : l'artisan doit pouvoir réessayer.
+    // Acceptation → `appinstalled` fait le ménage et affiche le toast.
+    if (outcome !== 'accepted') showToast('Installation annulée');
   };
 
   // ---- Notifications ----
@@ -804,6 +899,10 @@ function App() {
   // Escape = même chemin que la croix (confirm + coupe micro), pas un close silencieux.
   const escapeHandlerRef = useRef(() => {});
   escapeHandlerRef.current = () => {
+    if (installGuideOpen) {
+      setInstallGuideOpen(false);
+      return;
+    }
     if (confirmDialog) {
       setConfirmDialog(null);
       return;
@@ -2156,6 +2255,23 @@ Texte dicté :
               <div className="guide-row-head"><FileText size={22} color="var(--color-accent)" /><h4>PDF & partage</h4></div>
               <p>Relis et édite le rapport, télécharge le PDF ou partage-le (fichier réel, pas un lien) — tout fonctionne hors-ligne.</p>
             </div>
+            <div className="guide-row">
+              <div className="guide-row-head"><Download size={22} color="var(--color-accent)" /><h4>Installer l'application</h4></div>
+              <p>Ajoute ChantierExpress à ton écran d'accueil : ouverture directe, plein écran, et accès à tes fiches même sans réseau.</p>
+              {isStandalone ? (
+                <div className="guide-installed"><Check size={16} /> Application installée</div>
+              ) : (
+                <div className="guide-install-actions">
+                  <button
+                    className={`btn ${canPromptInstall ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={installApp}
+                    style={{ minHeight: 44 }}
+                  >
+                    <Download size={16} />&nbsp;{canPromptInstall ? "Installer l'app" : 'Voir la marche à suivre'}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
@@ -2552,6 +2668,41 @@ Texte dicté :
                 </button>
                 <button className="btn btn-secondary btn-block" onClick={() => generatePdf('share')} disabled={pdfGenerating} style={{ minHeight: 52 }}>
                   <Share2 size={16} />&nbsp;{pdfGenerating ? 'Génération…' : 'Partager le PDF'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ═══════════════ MODAL: INSTALL GUIDE ═══════════════ */}
+      {installGuideOpen && (() => {
+        const guide = INSTALL_GUIDES[installPlatform] || INSTALL_GUIDES.generic;
+        return (
+          <div className="dialog-backdrop centered">
+            <div className="dialog">
+              <div className="dialog-head">
+                <div className="dialog-title">{guide.title}</div>
+                <button className="dialog-close" onClick={() => setInstallGuideOpen(false)}><X size={20} /></button>
+              </div>
+              <div className="install-steps">
+                {guide.steps.map((step, i) => {
+                  const StepIcon = step.icon ? INSTALL_STEP_ICONS[step.icon] : null;
+                  return (
+                    <div key={i} className="install-step">
+                      <span className="install-step-num">{i + 1}</span>
+                      <span className="install-step-text">
+                        {StepIcon && <StepIcon size={16} className="install-step-icon" />}
+                        {step.text}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {guide.note && <p className="install-note">{guide.note}</p>}
+              <div className="dialog-actions" style={{ justifyContent: 'flex-end' }}>
+                <button className="btn btn-primary" onClick={() => setInstallGuideOpen(false)} style={{ minHeight: 44 }}>
+                  J'ai compris
                 </button>
               </div>
             </div>

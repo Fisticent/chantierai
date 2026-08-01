@@ -1,9 +1,17 @@
-const CACHE_NAME = 'chantierexpress-cache-v2';
+const CACHE_NAME = 'chantierexpress-cache-v3';
 // Precache only stable public assets. Hashed Vite bundles (/assets/*) are
 // cached opportunistically after a successful network fetch.
+// '/' et '/index.html' sont précachés pour que le 1er lancement hors-ligne
+// d'une app installée affiche l'interface au lieu d'une page blanche.
 const ASSETS = [
+  '/',
+  '/index.html',
   '/icon.svg',
-  '/manifest.json'
+  '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-maskable-512.png',
+  '/apple-touch-icon.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -42,7 +50,11 @@ self.addEventListener('fetch', (e) => {
           }
           return networkResponse;
         })
-        .catch(() => caches.match(e.request).then((cached) => cached || caches.match('/index.html')))
+        // En network-first la racine est cachée sous la clé '/', pas '/index.html' :
+        // on essaie les deux, sinon le repli hors-ligne ne matche jamais.
+        .catch(() => caches.match(e.request)
+          .then((cached) => cached || caches.match('/index.html'))
+          .then((cached) => cached || caches.match('/')))
     );
     return;
   }

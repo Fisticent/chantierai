@@ -22,3 +22,6 @@ support.js
 
 # Benches / probes locaux (ne pas committer)
 _tmp_*
+
+# Script de scraping leads (projet à part, pas suivi dans ce repo — contient un .env)
+scrapping/

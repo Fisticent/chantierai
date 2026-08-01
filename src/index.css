@@ -1308,20 +1308,6 @@ button, input, textarea, select {
   margin: 0 0 8px;
 }
 
-.photo-attach-select-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  background: var(--color-accent-100);
-  color: var(--color-accent-800);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  font-size: 12.5px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
 .photo-attach {
   display: flex;
   flex-direction: column;
@@ -1432,11 +1418,6 @@ button, input, textarea, select {
   align-items: center;
   justify-content: center;
   border: 2px solid var(--color-bg);
-}
-
-.photo-chip.is-selected img {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 2px var(--color-accent-200);
 }
 
 .photo-chip.is-dragging img {

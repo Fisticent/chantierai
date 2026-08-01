@@ -546,7 +546,6 @@ function App() {
   const pendingPhotoClickAtMsRef = useRef(null);
   // Drag & drop de rattachement photo → tâche (voir movePhotoToTask).
   const [photoDrag, setPhotoDrag] = useState(null); // { photoNumber, url, x, y, overKey }
-  const [selectedPhotoNum, setSelectedPhotoNum] = useState(null); // repli tap-to-move
   const dragStartRef = useRef(null); // { photoNumber, url, x, y, pointerId, timer, moved }
   const clientPickerRef = useRef(null);
   const dictationFieldRef = useRef(null);
@@ -1448,15 +1447,14 @@ Texte dicté :
     });
   };
 
+  /** Pas de toast : la vignette qui change de ligne est déjà le retour visuel. */
   const applyPhotoDropKey = (photoNumber, key) => {
     if (key === 'none') {
       movePhotoToTask(photoNumber, null, null);
-      showToast('Photo détachée', 'success');
       return;
     }
     const [zi, ti] = key.split(':').map(Number);
     movePhotoToTask(photoNumber, zi, ti);
-    showToast('Photo déplacée', 'success');
   };
 
   const handlePhotoChipPointerDown = (e, photoNumber, url) => {
@@ -1506,14 +1504,11 @@ Texte dicté :
     window.clearTimeout(start.timer);
     dragStartRef.current = null;
     try { start.el?.releasePointerCapture(e.pointerId); } catch { /* noop */ }
-    if (start.activated) {
-      setPhotoDrag((pd) => {
-        if (pd?.overKey) applyPhotoDropKey(pd.photoNumber, pd.overKey);
-        return null;
-      });
-    } else {
-      setSelectedPhotoNum((cur) => (cur === start.photoNumber ? null : start.photoNumber));
-    }
+    if (!start.activated) return; // simple tap : rien à faire, seul le glisser déplace
+    setPhotoDrag((pd) => {
+      if (pd?.overKey) applyPhotoDropKey(pd.photoNumber, pd.overKey);
+      return null;
+    });
   };
 
   const handlePhotoChipPointerCancel = (e) => {
@@ -1524,12 +1519,6 @@ Texte dicté :
       dragStartRef.current = null;
     }
     setPhotoDrag(null);
-  };
-
-  const handlePhotoDropZoneClick = (key) => {
-    if (selectedPhotoNum == null) return;
-    applyPhotoDropKey(selectedPhotoNum, key);
-    setSelectedPhotoNum(null);
   };
 
   // ---- Save / delete intervention ----
@@ -2447,12 +2436,11 @@ Texte dicté :
                 return (
                   <div
                     key={n}
-                    className={`photo-chip ${selectedPhotoNum === n ? 'is-selected' : ''} ${photoDrag?.photoNumber === n ? 'is-dragging' : ''}`}
+                    className={`photo-chip ${photoDrag?.photoNumber === n ? 'is-dragging' : ''}`}
                     onPointerDown={(e) => handlePhotoChipPointerDown(e, n, p.url)}
                     onPointerMove={handlePhotoChipPointerMove}
                     onPointerUp={handlePhotoChipPointerUp}
                     onPointerCancel={handlePhotoChipPointerCancel}
-                    onClick={(e) => e.stopPropagation()}
                   >
                     {/* draggable=false : sinon le glisser natif d'image de Chrome démarre
                         au 1er mouvement et annule nos pointer events (pointercancel). */}
@@ -2464,13 +2452,7 @@ Texte dicté :
               return (
                 <div className="field">
                   <label>Rattachement des photos</label>
-                  <p className="form-hint photo-attach-hint">Glisse une photo sur la bonne ligne (ou touche-la, puis touche la ligne de destination).</p>
-                  {selectedPhotoNum != null && (
-                    <div className="photo-attach-select-bar">
-                      <span>Photo {selectedPhotoNum} sélectionnée — touche la ligne de destination</span>
-                      <button type="button" className="text-link-btn" onClick={() => setSelectedPhotoNum(null)}>Annuler</button>
-                    </div>
-                  )}
+                  <p className="form-hint photo-attach-hint">Reste appuyé sur une photo, puis fais-la glisser sur la bonne ligne.</p>
                   <div className="photo-attach">
                     {zones.map((zone, zi) => (
                       <div key={zi} className="photo-attach-zone">
@@ -2484,7 +2466,6 @@ Texte dicté :
                               key={ti}
                               className={`photo-attach-task ${photoDrag?.overKey === dropKey ? 'is-over' : ''}`}
                               data-drop-key={dropKey}
-                              onClick={() => handlePhotoDropZoneClick(dropKey)}
                             >
                               <div className="photo-attach-task-text">{cleanText}</div>
                               <div className="photo-attach-strip">
@@ -2501,7 +2482,6 @@ Texte dicté :
                       <div
                         className={`photo-attach-zone photo-attach-unattached ${photoDrag?.overKey === 'none' ? 'is-over' : ''}`}
                         data-drop-key="none"
-                        onClick={() => handlePhotoDropZoneClick('none')}
                       >
                         <div className="photo-attach-zone-title">Non rattachées</div>
                         <div className="photo-attach-strip">
